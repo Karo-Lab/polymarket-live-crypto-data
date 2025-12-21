@@ -182,7 +182,7 @@ async def market_data_worker(
                             best_ask,
                             ask_vol,
                         ]
-                        logger.info(f"Row info: {row}")
+                        logger.debug(f"Row info: {row}")
                         await buffer.put(row)
                 finally:
                     ping_task.cancel()
