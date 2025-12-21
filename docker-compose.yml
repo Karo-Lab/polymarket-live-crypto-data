@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  polymarket-live-15m:
+    container_name: polymarket-live-15m
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs  
+    env_file:
+      - .env
+    networks:
+      - polymarket-backend
+
+networks:
+  polymarket-backend:
+    external: true
