@@ -79,7 +79,7 @@ class BasePolymarketCollector(ABC):
         if not token_ids:
             return
     
-        # Expire after the next interval start + 15s (buffer time for it to cancel)
+        # Expire after the next interval start + 15s (buffer time for it to)
         expiry = epoch + self.rotation_interval + 15
     
         logger.info(
@@ -110,6 +110,8 @@ class BasePolymarketCollector(ABC):
                                 continue
                             
                             data = loads(message)
+                            if data.get("event_type") != "book":
+                                continue
     
                             tid = data.get("asset_id")
                             meta = token_map.get(tid)
