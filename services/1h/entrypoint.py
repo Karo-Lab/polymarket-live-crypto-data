@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
 from typing import List
-from common.logger import logger
+from common.logger import logger, setup_logger
 from asyncio import run
 from time import time
 from pytz import timezone as pytz_tz
 from shared.core import BasePolymarketCollector
+
+setup_logger("live-crypto-1h-collector")
 
 class LiveCrypto1hCollector(BasePolymarketCollector):
     def __init__(self, base_filename: str, topics: List[str], rotation_interval: int, data_dir: str) -> None:

@@ -1,8 +1,10 @@
 from typing import List
-from common.logger import logger
+from common.logger import logger, setup_logger
 from asyncio import run
 from time import time
 from shared.core import BasePolymarketCollector
+
+setup_logger("live-crypto-4h-collector")
 
 class LiveCrypto4hCollector(BasePolymarketCollector):
     def __init__(self, base_filename: str, topics: List[str], rotation_interval: int, data_dir: str) -> None:
