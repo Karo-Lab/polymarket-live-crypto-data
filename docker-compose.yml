@@ -17,22 +17,22 @@ services:
   polymarket-live-15m-crypto-data-collector:
     <<: *default-config
     container_name: polymarket-live-15m-crypto-data-collector
-    command: python services/15m/entrypoint.py
+    command: uv run python -m services.15m.entrypoint
 
   polymarket-live-1h-crypto-data-collector:
     <<: *default-config
     container_name: polymarket-live-1h-crypto-data-collector
-    command: python services/1h/entrypoint.py
+    command: uv run python -m services.1h.entrypoint
 
   polymarket-live-4h-crypto-data-collector:
     <<: *default-config
     container_name: polymarket-live-4h-crypto-data-collector
-    command: python services/4h/entrypoint.py
+    command: uv run python -m services.4h.entrypoint
 
   polymarket-live-daily-crypto-data-collector:
     <<: *default-config
     container_name: polymarket-live-daily-crypto-data-collector
-    command: python services/Daily/entrypoint.py
+    command: uv run python -m services.Daily.entrypoint
 
 networks:
   polymarket-backend:
