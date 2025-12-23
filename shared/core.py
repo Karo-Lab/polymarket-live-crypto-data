@@ -10,7 +10,7 @@ from typing import Dict, List, Any
 from json import dumps, loads
 from aiohttp import ClientSession
 from os import makedirs, path
-from pandas import DataFrame, to_datetime
+from pandas import DataFrame
 from questdb.ingress import Sender
 
 from shared.utils import to_numpy_book
@@ -42,7 +42,6 @@ class BasePolymarketCollector(ABC):
         batch_rows = []
         last_flush = get_event_loop().time()
         
-        logger.info(f"NICE {quest_db_cfg.url}")
         with Sender.from_conf(quest_db_cfg.url) as sender:
             try:
                 while True:
