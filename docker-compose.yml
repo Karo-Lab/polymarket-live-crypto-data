@@ -33,6 +33,11 @@ services:
     <<: *default-config
     container_name: polymarket-live-daily-crypto-data-collector
     command: uv run python -m services.Daily.entrypoint
+  
+  polymarket-live-daily-stocks-data-collector:
+    <<: *default-config
+    container_name: polymarket-live-daily-stocks-data-collector
+    command: uv run python -m services.stocks.entrypoint
 
 networks:
   polymarket-backend:
