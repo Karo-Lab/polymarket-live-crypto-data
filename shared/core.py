@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import time
 from common.logger import logger
-from common.config import config
+from common.config import config, quest_db_cfg
 from asyncio import Queue, get_event_loop, wait_for, TimeoutError, create_task, sleep, wait, FIRST_COMPLETED
 from csv import writer
 from datetime import datetime, timezone
@@ -10,7 +10,10 @@ from typing import Dict, List, Any
 from json import dumps, loads
 from aiohttp import ClientSession
 from os import makedirs, path
+from pandas import DataFrame, to_datetime
+from questdb.ingress import Sender
 
+from shared.utils import to_numpy_book
 
 class BasePolymarketCollector(ABC):
     def __init__(self, base_filename: str, topics: List[str], rotation_interval: int, data_dir) -> None:
@@ -18,18 +21,61 @@ class BasePolymarketCollector(ABC):
         self.topics = topics
         self.rotation_interval = rotation_interval
         self.buffer = Queue(maxsize=50000)
+        self.ingest_quest_db_queue = Queue(maxsize=50000)
         self.data_dir = data_dir
         
         makedirs(self.data_dir, exist_ok=True)
         current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         filename = f"{self.base_filename}_{current_date}.csv"
         self.csv_file_path = path.join(self.data_dir, filename) 
+        
+        self.quest_db_sender = Sender.from_conf(quest_db_cfg.url)
 
     @abstractmethod
     def get_floored_epoch(self,offset=0) -> Any:
         """Calculates the start of a 15m window. Offset=1 gets the next window."""
         pass
         
+    async def ingest_quest_db(self, batch_size=1000, flush_interval=0.5):      
+        columns = ["timestamp", "receipt_time", "slug", "token_id", "token_name", "bids", "asks"]
+        
+        batch_rows = []
+        last_flush = get_event_loop().time()
+        
+        logger.info(f"NICE {quest_db_cfg.url}")
+        with Sender.from_conf(quest_db_cfg.url) as sender:
+            try:
+                while True:
+                    try:
+                        row = await wait_for(self.ingest_quest_db_queue.get(), timeout=0.1)
+                        
+                        if row is None: # Shutdown signal
+                            break
+                        
+                        batch_rows.append(row)
+                        self.ingest_quest_db_queue.task_done()
+                        
+                    except TimeoutError:
+                        pass
+                    
+                    current_time = get_event_loop().time()
+                    
+                    if len(batch_rows) >= batch_size or (current_time - last_flush) >= flush_interval:
+                        if batch_rows:
+                            df_to_send = DataFrame(batch_rows, columns=columns)
+                            sender.dataframe(df_to_send, table_name='poly_live_price', at='timestamp')
+                            sender.flush()
+                            
+                            batch_rows = []
+                            last_flush = current_time
+            except Exception as e:
+                logger.error(f"QuestDB Ingestion Error: {e}")
+            finally:
+                if batch_rows:
+                    df_to_send = DataFrame(batch_rows, columns=columns)
+                    sender.dataframe(df_to_send, table_name='poly_live_price', at='timestamp')
+                    sender.flush()
+            
     async def csv_writer_task(self, batch_size=1000, flush_interval=0.5):
         """
             Batch write to csv, only write to csv if batch size reach or flush interval happen
@@ -140,7 +186,29 @@ class BasePolymarketCollector(ABC):
                                 ask_vol,
                             ]
                             logger.debug(f"Row info: {row}")
-                            await self.buffer.put(row)
+                            
+                            bids_matrix = to_numpy_book(bids)
+                            asks_matrix = to_numpy_book(asks)
+                            raw_ts = int(data.get("timestamp"))
+                            if raw_ts > 1e15: 
+                                ts_dt = datetime.fromtimestamp(raw_ts / 1_000_000, tz=timezone.utc)
+                            elif raw_ts > 1e12:
+                                ts_dt = datetime.fromtimestamp(raw_ts / 1_000, tz=timezone.utc)
+                            else:
+                                ts_dt = datetime.fromtimestamp(raw_ts, tz=timezone.utc)
+                            receipt_dt = datetime.now(timezone.utc)
+                            quest_db_row = [
+                                ts_dt,
+                                receipt_dt,
+                                meta["topic"],
+                                tid,
+                                meta["side"],
+                                bids_matrix,
+                                asks_matrix,
+                            ]
+                                                        
+                            # await self.buffer.put(row)
+                            await self.ingest_quest_db_queue.put(quest_db_row)
                     finally:
                         ping_task.cancel()
     
@@ -195,7 +263,10 @@ class BasePolymarketCollector(ABC):
                         ids = loads(market.get("clobTokenIds", "[]"))
     
                         if len(ids) >= 2:
-                            token_map[ids[0]] = {"topic": slug, "side": outcomes[0]}
+                            token_map[ids[0]] = {
+                                "topic": slug, 
+                                "side": outcomes[0]
+                            }
                             token_map[ids[1]] = {
                                 "topic": slug,
                                 "side": outcomes[1],
@@ -252,7 +323,8 @@ class BasePolymarketCollector(ABC):
         """    
         while True:
             try:
-                writer_task = create_task(self.csv_writer_task())
+                # writer_task = create_task(self.csv_writer_task())
+                writer_task = create_task(self.ingest_quest_db())
                 orchestrator_task = create_task(self.manager())
                 
                 _done, pending = await wait(

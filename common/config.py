@@ -12,3 +12,12 @@ class Config:
         self.WS_URL = os.getenv("WS_URL","wss://ws-subscriptions-clob.polymarket.com")
         
 config = Config()
+
+class QuestDBConfig:
+    def __init__(self) -> None:
+        host = os.getenv("QUEST_DB_HOST", "localhost")
+        port = int(os.getenv("QUEST_DB_PORT", 9000))
+        self.url = f"http::addr={host}:{port};"
+        
+    
+quest_db_cfg = QuestDBConfig()
