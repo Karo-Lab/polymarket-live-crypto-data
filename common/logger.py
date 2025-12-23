@@ -3,7 +3,7 @@ from pathlib import Path
 import sys
 
 # Get the directory where logger.py actually lives
-CURRENT_FILE_DIR = Path(__file__).resolve().parent
+CURRENT_FILE_DIR = Path(__file__).resolve().parent.parent
 
 ROOT_DIR = CURRENT_FILE_DIR
 
