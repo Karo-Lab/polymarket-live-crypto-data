@@ -1,14 +1,12 @@
-from datetime import datetime, timezone
 from typing import List
 from common.logger import logger, setup_logger
 from asyncio import run
 from time import time
-from pytz import timezone as pytz_tz
-from shared.core import BasePolymarketCollector
+from shared.ingestion import BasePolymarketCollector
 
-setup_logger("live-crypto-daily-collector")
+setup_logger("live-crypto-15m-collector")
 
-class LiveCryptoDailyCollector(BasePolymarketCollector):
+class LiveCrypto15mCollector(BasePolymarketCollector):
     def __init__(self, base_filename: str, topics: List[str], rotation_interval: int, data_dir: str) -> None:
         super().__init__(
             base_filename, 
@@ -24,26 +22,20 @@ class LiveCryptoDailyCollector(BasePolymarketCollector):
         )
     
     def build_slug(self, slug_base: str, epoch):
-        dt_utc = datetime.fromtimestamp(epoch, tz=timezone.utc)
-        # et_tz = pytz_tz("US/Eastern")
-        # dt_et = dt_utc.astimezone(et_tz)
-        
-        formatted_time = dt_utc.strftime("%B-%d").lower()
-        
-        return f"{slug_base}-{formatted_time}"
+        return f"{slug_base}-{epoch}"
 
 async def main():
     topics = [
-        "bitcoin-up-or-down-on",
-        "ethereum-up-or-down-on",
-        "solana-up-or-down-on",
-        "xrp-up-or-down-on",
+        "btc-updown-15m",
+        "eth-updown-15m",
+        "sol-updown-15m",
+        "xrp-updown-15m",
     ]
-    live = LiveCryptoDailyCollector(
+    live = LiveCrypto15mCollector(
         base_filename="polymarket-crypto-data",
         topics=topics,
-        rotation_interval=86400, # Daily interval
-        data_dir="data/D1"
+        rotation_interval=900,
+        data_dir="data/15m"
     )
     
     logger.info("Booting polymarket 15m live crypto price collector")

@@ -3,8 +3,7 @@ from typing import List
 from common.logger import logger, setup_logger
 from asyncio import run
 from time import time
-from pytz import timezone as pytz_tz
-from shared.core import BasePolymarketCollector
+from shared.ingestion import BasePolymarketCollector
 
 setup_logger("live-crypto-daily-collector")
 
@@ -34,28 +33,28 @@ class LiveStocksDailyCollector(BasePolymarketCollector):
 
 async def main():
     topics = [
-        "nik-up-or-down-on", # Nikkei
-        "spx-up-or-down-on", # SPX500
-        "cl-up-or-down-on",  # Crude Oil
-        "gc-up-or-down-on",  # Gold
-        "nflx-up-or-down-on",# Netflix
-        "ukx-up-or-down-on", # Ukx
-        "hsi-up-or-down-on", # Hong kong index
-        "si-up-or-down-on",  # Silver
-        "rut-up-or-down-on", # Russel
-        "dax-up-or-down-on", # German index
-        "dji-up-or-down-on", # Dowjone index
-        "tsla-up-or-down-on",# Tesla 
-        "pltr-up-or-down-on",# Palantir 
-        "amzn-up-or-down-on",
-        "nvda-up-or-down-on",
-        "msft-up-or-down-on",
-        "ndx-up-or-down-on",
-        "aapl-up-or-down-on",
-        "meta-up-or-down-on",
-        "googl-up-or-down-on",
-        "open-up-or-down-on",
-        "nya-up-or-down-on"
+        "nik-up-or-down-on",    # Nikkei
+        "spx-up-or-down-on",    # SPX500
+        "cl-up-or-down-on",     # Crude Oil
+        "gc-up-or-down-on",     # Gold
+        "nflx-up-or-down-on",   # Netflix
+        "ukx-up-or-down-on",    # Ukx
+        "hsi-up-or-down-on",    # Hong kong index
+        "si-up-or-down-on",     # Silver
+        "rut-up-or-down-on",    # Russel
+        "dax-up-or-down-on",    # German index
+        "dji-up-or-down-on",    # Dowjone index
+        "tsla-up-or-down-on",   # Tesla 
+        "pltr-up-or-down-on",   # Palantir 
+        "amzn-up-or-down-on",   # Amazon
+        "nvda-up-or-down-on",   # Nvidia
+        "msft-up-or-down-on",   # Microsoft
+        "ndx-up-or-down-on",    # Nasdaq
+        "aapl-up-or-down-on",   # Apple
+        "meta-up-or-down-on",   # Meta
+        "googl-up-or-down-on",  # Google
+        "open-up-or-down-on",   #  
+        "nya-up-or-down-on"     # NYSE
     ]
     live = LiveStocksDailyCollector(
         base_filename="polymarket-stocks-data",

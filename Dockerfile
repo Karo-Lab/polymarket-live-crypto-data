@@ -1,26 +1,11 @@
-# FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
-
-# WORKDIR /app
-
-# COPY . .
-
-# RUN uv sync
-
-# RUN mkdir -p /app/data /app/logs
-
-# CMD ["uv", "run", "main.py"]
-# 
-# --- Stage 1: Build Stage (No changes here, just for context) ---
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential curl && \
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-# --compile-bytecode makes the final startup even faster
 RUN uv sync --frozen --no-install-project --no-dev --compile-bytecode
 
-# --- Stage 2: Final Runtime Stage ---
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 # Prevent uv from ever trying to download or sync at runtime
@@ -33,5 +18,4 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY . .
 
-# Use --no-sync to explicitly tell UV to skip the check
 CMD ["uv", "run", "--no-sync", "main.py"]

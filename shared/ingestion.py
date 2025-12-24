@@ -42,7 +42,7 @@ class BasePolymarketCollector(ABC):
         batch_rows = []
         last_flush = get_event_loop().time()
         
-        with Sender.from_conf(quest_db_cfg.url) as sender:
+        with self.quest_db_sender as sender:
             try:
                 while True:
                     try:
@@ -188,6 +188,7 @@ class BasePolymarketCollector(ABC):
                             
                             bids_matrix = to_numpy_book(bids)
                             asks_matrix = to_numpy_book(asks)
+                                                        
                             raw_ts = int(data.get("timestamp"))
                             if raw_ts > 1e15: 
                                 ts_dt = datetime.fromtimestamp(raw_ts / 1_000_000, tz=timezone.utc)

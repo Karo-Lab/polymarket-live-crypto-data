@@ -1,12 +1,14 @@
+from datetime import datetime, timezone
 from typing import List
 from common.logger import logger, setup_logger
 from asyncio import run
 from time import time
-from shared.core import BasePolymarketCollector
+from pytz import timezone as pytz_tz
+from shared.ingestion import BasePolymarketCollector
 
-setup_logger("live-crypto-4h-collector")
+setup_logger("live-crypto-daily-collector")
 
-class LiveCrypto4hCollector(BasePolymarketCollector):
+class LiveCryptoDailyCollector(BasePolymarketCollector):
     def __init__(self, base_filename: str, topics: List[str], rotation_interval: int, data_dir: str) -> None:
         super().__init__(
             base_filename, 
@@ -16,27 +18,32 @@ class LiveCrypto4hCollector(BasePolymarketCollector):
         )
     
     def get_floored_epoch(self,offset=0):
-        utc_offset = 7 * 3600  
         now = int(time())
-        local_now = now + utc_offset
-        floored_local = (local_now - (local_now % self.rotation_interval))
-        return (floored_local - utc_offset) + (offset * self.rotation_interval)
-        
+        return (now - (now % self.rotation_interval)) + (
+            offset * self.rotation_interval
+        )
+    
     def build_slug(self, slug_base: str, epoch):
-        return f"{slug_base}-{epoch}"
+        dt_utc = datetime.fromtimestamp(epoch, tz=timezone.utc)
+        # et_tz = pytz_tz("US/Eastern")
+        # dt_et = dt_utc.astimezone(et_tz)
+        
+        formatted_time = dt_utc.strftime("%B-%d").lower()
+        
+        return f"{slug_base}-{formatted_time}"
 
 async def main():
     topics = [
-        "btc-updown-4h",
-        "eth-updown-4h",
-        "sol-updown-4h",
-        "xrp-updown-4h",
+        "bitcoin-up-or-down-on",
+        "ethereum-up-or-down-on",
+        "solana-up-or-down-on",
+        "xrp-up-or-down-on",
     ]
-    live = LiveCrypto4hCollector(
+    live = LiveCryptoDailyCollector(
         base_filename="polymarket-crypto-data",
         topics=topics,
-        rotation_interval=14400, #4h interval
-        data_dir="data/4hm"
+        rotation_interval=86400, # Daily interval
+        data_dir="data/D1"
     )
     
     logger.info("Booting polymarket 15m live crypto price collector")

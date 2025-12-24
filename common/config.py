@@ -5,7 +5,6 @@ load_dotenv()
 
 class Config:
     def __init__(self):
-        # self.ROTATION_INTERVAL: int = int(os.getenv("ROTATION_INTERVAL", 900))
         self.TOPIC = os.getenv("TOPIC")
         self.GAMMA_ENDPOINT = os.getenv("GAMMA_ENDPOINT", "https://gamma-api.polymarket.com/events/slug") 
         self.PRE_WARM_TIME = 45      
@@ -18,6 +17,8 @@ class QuestDBConfig:
         host = os.getenv("QUEST_DB_HOST", "localhost")
         port = int(os.getenv("QUEST_DB_PORT", 9000))
         self.url = f"http::addr={host}:{port};"
+        
+        self.pwp = f"user=admin password=quest host={host} port={port} dbname=qdb"
         
     
 quest_db_cfg = QuestDBConfig()
