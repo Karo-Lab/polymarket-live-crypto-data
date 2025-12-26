@@ -1,0 +1,31 @@
+[workspace]
+members = [
+    "crates/book"
+]
+
+resolver = "2"
+
+[workspace.dependencies]
+tokio = { version = "1.47.2" , features = ["full", "sync"]}
+tokio-tungstenite = { version = "0.27.0", features = ["rustls-tls-native-roots"]}
+tokio-util = { version = "0.7.17" , default-features = true }
+rustls = {version = "0.23.31", features = ["ring"]}
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1.0.142" }
+tracing = {version = "0.1.41", default-features = true}
+tracing-subscriber = {version = "0.3.19", features = ["fmt", "time", "env-filter"]}
+tracing-appender = {version = "0.2.3", default-features = true}
+dashmap = {version = "7.0.0-rc2", default-features = true}
+bytes = { version = "1.11.0" , default-features = true}
+async-trait = { version = "0.1.89" , default-features = true}
+futures-util = { version = "0.3.31" , default-features=true}
+futures = { version = "0.3.31" , default-features = true}
+dotenv = { version = "0.15.0" , default-features = true}
+reqwest = { version = "0.12.24" , features=["json"]}
+rand = { version = "0.9.2" , default-features = true}
+colored = { version = "3.0.0" , default-features = true}
+rust_decimal = { version = "1.39.0", default-features = true }
+rust_decimal_macros = { version = "1.39.0" , default-features = true}
+crc32fast = { version = "1.5.0" , features = ["default"]}
+chrono = { version = "0.4.42" ,features = ["default"]}
+questdb-rs = { version = "6.1.0" , features = ["default"]}

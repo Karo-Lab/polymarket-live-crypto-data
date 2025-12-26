@@ -18,7 +18,8 @@ class QuestDBConfig:
         port = int(os.getenv("QUEST_DB_PORT", 9000))
         self.url = f"http::addr={host}:{port};"
         
-        self.pwp = f"user=admin password=quest host={host} port={port} dbname=qdb"
+        pwp_port = int(os.getenv("QUEST_DB_PWP", 8812))
+        self.pwp = f"user=admin password=quest host={host} port={pwp_port} dbname=qdb"
         
     
 quest_db_cfg = QuestDBConfig()
