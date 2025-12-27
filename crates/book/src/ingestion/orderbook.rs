@@ -51,23 +51,17 @@ impl SnapshotManager {
     }
     
     pub async fn run_ingestion_pipeline(mut self, shutdown_token: CancellationToken) {
-        let batch_size = 500;
+        let batch_size = 1000;
         
         let mut batch = Vec::with_capacity(batch_size);
         
-        let mut flush_interval = interval(Duration::from_secs(1));
-        flush_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 Some(msg) = self.snapshot_rx.recv() => {
                     batch.push(msg);
                     
                     if batch.len() >= batch_size {
-                        self.flush_batch(&mut batch, batch_size).await;
-                    }
-                }
-                _ = flush_interval.tick() => {
-                    if !batch.is_empty() {
+                        tracing::info!("Inges {}", batch.len());
                         self.flush_batch(&mut batch, batch_size).await;
                     }
                 }

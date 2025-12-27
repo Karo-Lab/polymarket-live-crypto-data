@@ -1,6 +1,7 @@
 mod common;
 mod source;
 mod ingestion;
+mod meta;
 
 use std::collections::HashMap;
 use futures::future::join_all;
@@ -9,7 +10,7 @@ use tokio::{sync::{mpsc}};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    common::logging::SystemLogging, ingestion::{orderbook::{BookSnapShot, SnapshotManager}, questdb_client::QuestDBClient}, source::okx::{OkxOrderBook, OkxOrderBookDataStream, OrderBookCommand}
+    common::logging::SystemLogging, ingestion::{orderbook::{BookSnapShot, SnapshotManager}, questdb_client::QuestDBClient}, meta::{pipline_logger::{Pipelinelogger}, postgres_client::create_pool}, source::okx::{OkxOrderBook, OkxOrderBookDataStream, OrderBookCommand}
 };
 
 #[tokio::main]
@@ -19,6 +20,8 @@ async fn main() {
         CryptoProvider::install_default(default_provider())
             .expect("Unable to install rusttls crypto provider")
     };
+    
+    let dead_pool = create_pool();
 
     let (btc_cmd_tx, btc_cmd_rx) = mpsc::channel::<OrderBookCommand>(1024);
     let (eth_cmd_tx, eth_cmd_rx) = mpsc::channel::<OrderBookCommand>(1024);
@@ -75,40 +78,45 @@ async fn main() {
     let shutdown = CancellationToken::new();
 
     let (restart_signal_tx, restart_signal_rx) = mpsc::channel(1);
+    let (audit_tx, audit_rx) = mpsc::channel(1);
     
     let btc_restart_sig_cln = restart_signal_tx.clone();
     let btc_shutdown_sig = shutdown.clone();
     let btc_ingestion_tx = ingestion_pipeline_tx.clone();
+    let btc_audit_tx = audit_tx.clone();
     let okx_book_btc_handler_task = tokio::spawn(async move {
         let _ = okx_btc_ob
-            .run(btc_cmd_rx, btc_restart_sig_cln,btc_ingestion_tx,btc_shutdown_sig)
+            .run(btc_cmd_rx, btc_restart_sig_cln,btc_ingestion_tx,btc_audit_tx,btc_shutdown_sig)
             .await;
     });
     
     let eth_restart_sig_cln = restart_signal_tx.clone();
     let eth_shutdown_sig = shutdown.clone();
     let eth_ingestion_tx = ingestion_pipeline_tx.clone();
+    let eth_audit_tx = audit_tx.clone();
     let okx_book_eth_handler_task = tokio::spawn(async move {
         let _ = okx_eth_ob
-            .run(eth_cmd_rx, eth_restart_sig_cln,eth_ingestion_tx, eth_shutdown_sig)
+            .run(eth_cmd_rx, eth_restart_sig_cln,eth_ingestion_tx,eth_audit_tx, eth_shutdown_sig)
             .await;
     });
     
     let sol_restart_sig_cln = restart_signal_tx.clone();
     let sol_shutdown_sig = shutdown.clone();
     let sol_ingestion_tx = ingestion_pipeline_tx.clone();
+    let sol_audit_tx = audit_tx.clone();
     let okx_book_sol_handler_task = tokio::spawn(async move {
         let _ = okx_sol_ob
-            .run(sol_cmd_rx, sol_restart_sig_cln,sol_ingestion_tx, sol_shutdown_sig)
+            .run(sol_cmd_rx, sol_restart_sig_cln,sol_ingestion_tx,sol_audit_tx, sol_shutdown_sig)
             .await;
     });
     
     let xrp_restart_sig_cln = restart_signal_tx.clone();
     let xrp_shutdown_sig = shutdown.clone();
     let xrp_ingestion_tx = ingestion_pipeline_tx.clone();
+    let xrp_audit_tx = audit_tx.clone();
     let okx_book_xrp_handler_task = tokio::spawn(async move {
         let _ = okx_xrp_ob
-            .run(xrp_cmd_rx, xrp_restart_sig_cln,xrp_ingestion_tx,xrp_shutdown_sig)
+            .run(xrp_cmd_rx, xrp_restart_sig_cln,xrp_ingestion_tx,xrp_audit_tx,xrp_shutdown_sig)
             .await;
     });
 
@@ -119,6 +127,13 @@ async fn main() {
             .await;
     });
 
+    let pipeline_logger_shutdown = shutdown.clone();
+    let pipline_logger = Pipelinelogger::new(audit_rx, dead_pool);
+    let pipline_logger_task = tokio::spawn(async move {
+        pipline_logger
+            .run(pipeline_logger_shutdown).await;
+    });
+    
     let snapshot_heartbeat_shutdown = shutdown.clone();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(50));
@@ -181,6 +196,10 @@ async fn main() {
         }
         _ = quest_db_client_task => {
             tracing::info!("Quest db client stop");
+            shutdown.cancel();
+        }
+        _ = pipline_logger_task => {
+            tracing::info!("Pipeline logegr stop");
             shutdown.cancel();
         }
         _ = tokio::signal::ctrl_c() => {

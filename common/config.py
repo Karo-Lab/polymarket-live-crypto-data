@@ -23,3 +23,16 @@ class QuestDBConfig:
         
     
 quest_db_cfg = QuestDBConfig()
+
+class PostgresDBConfig:
+    def __init__(self) -> None:
+        host = os.getenv("POSTGRES_DB_HOST", "localhost")
+        port = int(os.getenv("POSTGRES_DB_PORT", 5432))
+        user = os.getenv("POSTGRES_DB_USER", "postgres")
+        password = os.getenv("POSTGRES_DB_PASSWORD", "kms")
+        db_name = os.getenv("POSTGRES_DB_NAME", "postgres")
+        
+        self.url = f"postgresql://{user}:{password}@{host}:{port}/{db_name}"
+        
+postgres_db_cfg = PostgresDBConfig()
+        

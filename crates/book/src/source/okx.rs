@@ -1,19 +1,17 @@
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap},
-    io::Write,
-    marker::PhantomData,
     str::FromStr,
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use crc32fast::Hasher;
 use futures_util::{SinkExt, StreamExt};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    sync::{mpsc, oneshot},
-    time::{interval, sleep, Duration, Instant},
+    sync::{mpsc, watch},
+    time::{Duration, interval, sleep},
 };
 use tokio_tungstenite::{
     connect_async,
@@ -21,7 +19,7 @@ use tokio_tungstenite::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::ingestion::orderbook::BookSnapShot;
+use crate::{ingestion::orderbook::BookSnapShot, meta::pipline_logger::AuditEvent};
 
 #[derive(Debug, Deserialize)]
 pub struct OkxOrderBookMesssage<'a> {
@@ -58,7 +56,7 @@ pub struct OrderLevel<'a> {
 
 #[derive(Debug)]
 pub enum OrderBookCommand {
-    Update(Bytes),
+    Update(Utf8Bytes),
     TakeSnapShot
 }
 
@@ -141,16 +139,17 @@ impl OkxOrderBook {
         mut rx: mpsc::Receiver<OrderBookCommand>,
         restart_signal_tx: mpsc::Sender<String>,
         ingestion_tx: mpsc::Sender<BookSnapShot>,
+        audit_tx: mpsc::Sender<AuditEvent>,
         shutdown_token: CancellationToken,
     ) {
-        let mut previous_seq_id = 0;
+        let mut local_previous_seq_id = 0;
         let depth = 25;
         loop {
             tokio::select! {
                 cmd = rx.recv() => {
                     match cmd {
-                        Some(OrderBookCommand::Update(bytes)) => {
-                            match serde_json::from_slice::<OkxOrderBookMesssage>(&bytes[..]) {
+                        Some(OrderBookCommand::Update(txt)) => {
+                            match serde_json::from_slice::<OkxOrderBookMesssage>(txt.as_bytes()) {
                                 Ok(v) => {
                                     match v.action.as_ref() {
                                         "update" => {
@@ -158,29 +157,42 @@ impl OkxOrderBook {
                                             for data in v.data {
                                                 self.ts = data.ts.to_string();
                                                 
-                                                if data.prev_seq_id != previous_seq_id {
+                                                if data.prev_seq_id != local_previous_seq_id {
                                                     let _ = restart_signal_tx.send(self.instrument_id.clone()).await;
+                                                    
+                                                    let _ = audit_tx.try_send(AuditEvent::SeqIdGap {
+                                                        symbol: self.instrument_id.clone(),
+                                                        expected: data.prev_seq_id,
+                                                        actual: local_previous_seq_id,
+                                                        details: None
+                                                    
+                                                    });
                                                 }
                                                 self.updates(&data);
-                                                previous_seq_id = data.seq_id;
+                                                local_previous_seq_id = data.seq_id;
         
                                                 let local_ob_cs = self.calculate_local_checksum();
-                                                if local_ob_cs != data.checksum {
+                                                if data.checksum !=  local_ob_cs {
                                                     let _ = restart_signal_tx.send(self.instrument_id.clone()).await;
+                                                    let _ = audit_tx.try_send(AuditEvent::CheckSumFailure { 
+                                                        symbol: self.instrument_id.clone(), 
+                                                        expected: data.checksum, 
+                                                        actual: local_ob_cs,
+                                                        details: None
+                                                    });
                                                 }
                                             }
-                                            // self.display(dbg_offset);
         
                                         },
                                         "snapshot" => {
-                                            // Flush all
+                                            // Flush all 
                                             self.bids.clear();
                                             self.asks.clear();
         
                                             self.instrument_id = v.arg.inst_id.to_string();
                                             for data in v.data {
                                                 self.ts = data.ts.to_string();
-                                                previous_seq_id = data.seq_id;
+                                                local_previous_seq_id = data.seq_id;
                                                 self.updates(&data);
                                             }
                                         }
@@ -315,7 +327,7 @@ impl OkxOrderBookDataStream {
         let init_sub_msg = self.init_subscribe_request();
 
         let mut failure_channels = Vec::with_capacity(4);
-
+                
         loop {
             match connect_async(url).await {
                 Ok((ws, _)) => {
@@ -361,8 +373,9 @@ impl OkxOrderBookDataStream {
                                         let pattern = b"\"instId\":\"";
                                         let bytes = txt.as_bytes();
                                         let mut chunk = [0u8; 16];
-
-                                        // Find the start index of the value of instId in the bytes return
+                                        
+                                        // Find the start index of the value of 'instId:' in the bytes return Okx websocket message
+                                        // of channel 'books'
                                         if let Some(index) = bytes.windows(pattern.len()).position(|window| window == pattern) {
                                             let start = index + pattern.len();
                                             if let Some(end) = bytes[start..].iter().position(|&b| b == b'"') {
@@ -371,15 +384,12 @@ impl OkxOrderBookDataStream {
                                                 chunk[..13].copy_from_slice(inst_id);
 
                                                 let current_val = u128::from_le_bytes(chunk);
-
                                                 for (hex,topic) in self.hex_topic_map.iter() {
-                                                    let mut buf = BytesMut::with_capacity(txt.len());
-
                                                     if current_val ^ *hex == 0 {
-                                                        buf.extend_from_slice(txt.as_bytes());
-
                                                         if let Some(tx) = self.channel_ob_map.get(topic) {
-                                                            if let Err(e) = tx.send(OrderBookCommand::Update(buf.freeze())).await {
+                                                            // Utf8Bytes utilize Bytes from bytes crate underthe hood
+                                                            // Cloning is cheap since Bytes act like Arc<T>
+                                                            if let Err(e) = tx.send(OrderBookCommand::Update(txt.clone())).await {
                                                                 tracing::warn!("Error forwarding {:?}",e);
                                                             }
                                                         }
