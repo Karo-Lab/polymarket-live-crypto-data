@@ -3,14 +3,12 @@ use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,
 };
-
-use bytes::Bytes;
 use crc32fast::Hasher;
 use futures_util::{SinkExt, StreamExt};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{mpsc},
     time::{Duration, interval, sleep},
 };
 use tokio_tungstenite::{
@@ -163,9 +161,7 @@ impl OkxOrderBook {
                                                     let _ = audit_tx.try_send(AuditEvent::SeqIdGap {
                                                         symbol: self.instrument_id.clone(),
                                                         expected: data.prev_seq_id,
-                                                        actual: local_previous_seq_id,
-                                                        details: None
-                                                    
+                                                        actual: local_previous_seq_id,                                                    
                                                     });
                                                 }
                                                 self.updates(&data);
@@ -178,7 +174,6 @@ impl OkxOrderBook {
                                                         symbol: self.instrument_id.clone(), 
                                                         expected: data.checksum, 
                                                         actual: local_ob_cs,
-                                                        details: None
                                                     });
                                                 }
                                             }

@@ -1,14 +1,18 @@
 use deadpool_postgres::Pool;
 use tokio::sync::{mpsc};
 use tokio_util::sync::CancellationToken;
+use tokio_postgres::types::Json;
 
 #[derive(Debug)]
 pub enum AuditEvent {
     SeqIdGap {
-        symbol: String, expected: i64, actual: i64, details: Option<String>
+        symbol: String, expected: i64, actual: i64
     },
     CheckSumFailure {
-        symbol: String, expected: i32, actual: i32, details: Option<String>
+        symbol: String, expected: i32, actual: i32
+    },
+    IngestFail {
+        details: Option<serde_json::Value>
     }
 }
 
@@ -57,20 +61,27 @@ impl Pipelinelogger {
         };
         
         let (event_type, symbol, expected, actual, details) = match event {
-                AuditEvent::SeqIdGap { symbol, expected, actual,details } => (
+                AuditEvent::SeqIdGap { symbol, expected, actual } => (
                     "SEQ_GAP",
                     symbol,
                     Some(expected),
                     Some(actual),
-                    details
+                    None
                 ),
-                AuditEvent::CheckSumFailure { symbol, expected, actual, details } => (
+                AuditEvent::CheckSumFailure { symbol, expected, actual } => (
                     "CHECKSUM_FAIL",
                     symbol,
                     Some(expected as i64),
                     Some(actual as i64),
-                    details
+                    None
                 ),
+                AuditEvent::IngestFail { details } => {
+                    ("INGEST_FAIL",
+                    "".to_string(),
+                    None,
+                    None,
+                    details)
+                }
             };
         
             let stmt = "
@@ -84,7 +95,7 @@ impl Pipelinelogger {
                 &event_type, 
                 &expected, 
                 &actual, 
-                &details
+                &Json(&details)
             ]).await {
                 tracing::warn!("Failed to insert audit log for {}: {}", symbol, e);
             }

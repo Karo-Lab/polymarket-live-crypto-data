@@ -163,8 +163,9 @@ async fn main() {
     
     let quest_db_client = QuestDBClient::new(quest_db_rx);
     let quest_db_client_shutdown = shutdown.clone();
+    let quest_db_audit_tx = audit_tx.clone();
     let quest_db_client_task = tokio::spawn(async move {
-        quest_db_client.run(quest_db_client_shutdown).await;
+        quest_db_client.run(quest_db_audit_tx,quest_db_client_shutdown).await;
     });
     
     let okx_book_handlers_task = {

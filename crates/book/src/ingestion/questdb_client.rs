@@ -1,13 +1,15 @@
 use questdb::ingress::{Buffer, Sender, TimestampNanos};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use serde_json::{json};
 
-use crate::{common::config::QuestDBConfig, ingestion::orderbook::BookSnapShot};
+use crate::{common::config::QuestDBConfig, ingestion::orderbook::BookSnapShot, meta::pipline_logger::AuditEvent};
 
 #[derive(Debug)]
 pub struct QuestDBClient {
     sender: Sender,
     data_rx: mpsc::Receiver<Vec<BookSnapShot>>,
+    
 }
 
 impl QuestDBClient {
@@ -35,7 +37,7 @@ impl QuestDBClient {
         Ok(())
     }
 
-    pub async fn run(mut self, shutdown_token: CancellationToken) {
+    pub async fn run(mut self, audit_tx: mpsc::Sender<AuditEvent>,shutdown_token: CancellationToken) {
         let mut buffer = self.sender.new_buffer();
 
         loop {
@@ -47,7 +49,18 @@ impl QuestDBClient {
                         });
                         
                         if let Err(e) = res {
-                            tracing::error!("Failed to ingest into QuestDB {:?}",e)
+                            let affected_instruments: Vec<String> = snapshots.into_iter().map(|v| {
+                                v.instrument_id
+                            }).collect();
+                            let error_details = json!({
+                                    "error_msg": e.to_string(),      
+                                    "error_debug": format!("{:?}", e), 
+                                    "affected_ids": affected_instruments, 
+                                    "snapshot_count": affected_instruments.len()
+                                });
+                            let _ = audit_tx.try_send(AuditEvent::IngestFail { 
+                                details: Some(error_details)
+                            });
                         }
                     } else {
                         break;
