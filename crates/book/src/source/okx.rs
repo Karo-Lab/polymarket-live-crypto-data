@@ -210,7 +210,7 @@ impl OkxOrderBook {
                                 for (
                                         (bid_price_, bid_size_), 
                                         (ask_price_, ask_size_)
-                                ) in self.bids.iter().take(depth).zip(self.asks.iter().take(depth)) {
+                                ) in self.bids.iter().rev().take(depth).zip(self.asks.iter().take(depth)) {
                                     bid_prices.push(*bid_price_);
                                     bid_sizes.push(*bid_size_);
                                     

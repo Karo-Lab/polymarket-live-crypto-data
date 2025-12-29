@@ -1,8 +1,7 @@
 import argparse
-from psycopg import connect
+from psycopg import connect, OperationalError
 from os import listdir, path
 from sys import exit
-# Ensure common.config has both quest_db_cfg and postgres_db_cfg
 from common.config import quest_db_cfg, postgres_db_cfg 
 from common.logger import logger, setup_logger
 
@@ -43,7 +42,8 @@ def run_db_migration(db_name: str, db_conn_string: str, direction: str):
                         cursor.execute(f.read())
                 
                 logger.info(f"[{db_name}] {direction} migrations success.")
-                
+    except OperationalError as e:
+        logger.error(f"[{db_name}] {direction} sql error at {script_name} - {e}")
     except Exception as e:
         logger.error(f"[{db_name}] {direction} migrations failed at {script_name} - {e}")
         exit(1)

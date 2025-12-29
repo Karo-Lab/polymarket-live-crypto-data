@@ -57,6 +57,8 @@ impl SnapshotManager {
         
         loop {
             tokio::select! {
+                // Every 50ms, a snapshot of the L2 books is sent to this thread
+                // If the batch is full, it get sent to quest db thread
                 Some(msg) = self.snapshot_rx.recv() => {
                     batch.push(msg);
                     

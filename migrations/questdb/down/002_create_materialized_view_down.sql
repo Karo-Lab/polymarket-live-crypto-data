@@ -1,0 +1,1 @@
+DROP MATERIALIZED VIEW IF EXISTS okx_features_1s;

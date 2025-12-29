@@ -6,4 +6,4 @@ CREATE TABLE IF NOT EXISTS pipline_audits (
     actual_val BIGINT,
     details JSONB
 );
-CREATE INDEX idx_audit_symbol_ts ON pipline_audits(symbol, ts);
+CREATE INDEX IF NOT EXISTS idx_audit_symbol_ts ON pipline_audits(symbol, ts);
