@@ -63,7 +63,7 @@ impl SnapshotManager {
                     batch.push(msg);
                     
                     if batch.len() >= batch_size {
-                        tracing::info!("Inges {}", batch.len());
+                        tracing::debug!("Inges {}", batch.len());
                         self.flush_batch(&mut batch, batch_size).await;
                     }
                 }

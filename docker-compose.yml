@@ -3,11 +3,31 @@ version: "3.9"
 x-common-config: &default-config
   build:
     context: .
-    dockerfile: Dockerfile
+    dockerfile: Dockerfile.uv
   restart: unless-stopped
   volumes:
     - ./data:/app/data
     - ./logs:/app/logs
+  env_file:
+    - .env
+  networks:
+    - polymarket-backend
+    
+x-script-config: &script-config
+  build:
+    context: .
+    dockerfile: Dockerfile.uv
+  restart: unless-stopped
+  env_file:
+    - .env
+  networks:
+    - polymarket-backend
+
+x-rust-config: &rust-config
+  build: 
+    context: .
+    dockerfile: Dockerfile.rust
+  restart: unless-stopped
   env_file:
     - .env
   networks:
@@ -38,6 +58,17 @@ services:
     <<: *default-config
     container_name: polymarket-live-daily-stocks-data-collector
     command: uv run python -m services.polymarket.stocks.entrypoint
+  
+  questdb-archiver:
+    <<: *script-config
+    container_name: questdb-archiver
+    command: uv run python -m scripts.cron.archiver
+  
+  local-orderbook-service:
+    <<: *rust-config
+    container_name: local-orderbook-service
+    command: cargo r target/release/book
+  
 
 networks:
   polymarket-backend:

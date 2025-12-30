@@ -55,7 +55,7 @@ impl Pipelinelogger {
         let client = match self.pool.get().await {
             Ok(c) => c,
             Err(e) => {
-                tracing::warn!("Failed to get connection to Postgres");
+                tracing::warn!("Failed to get connection to Postgres {:?}", e);
                 return;
             }
         };

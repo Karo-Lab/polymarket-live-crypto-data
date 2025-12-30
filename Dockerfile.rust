@@ -1,0 +1,23 @@
+FROM rust:1.81-slim-bookworm as builder
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates/book/Cargo.toml ./crates/book/
+
+RUN mkdir -p crates/book/src && \
+    echo "fn main() {}" > crates/book/src/main.rs && \
+    cargo build --release --bin book
+
+COPY crates/book/src ./crates/book/src
+
+RUN touch crates/book/src/main.rs && \
+    cargo build --release --bin book
+
+FROM debian:bookworm-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/book .
+
+CMD ["./book"]

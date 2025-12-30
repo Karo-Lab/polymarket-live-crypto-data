@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Set
 from psycopg import OperationalError, connect
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -18,11 +18,17 @@ def get_bronze_tables(pg_conn) -> List[dict]:
         return [{"registry_id": row[0],"table_name": row[1], "exchange": row[2]} for row in cur.fetchall()]
 
 def get_archived_dates(pg_conn, registry_id: int) -> Set[str]:
-    """Fetch set of already archived dates for a specific table."""
-    query = "SELECT partition_date FROM archives WHERE registry_id = %s"
-    with pg_conn.cursor() as cur:
-        cur.execute(query, (registry_id,))
-        return {row[0].strftime('%Y-%m-%d') for row in cur.fetchall()}
+    """Fetch set of already archived dates for a specific table. Fetched only the last 14 days since bronze table only have 7 days ttl data"""
+    window_start = (datetime.utcnow() - timedelta(days=14)).strftime('%Y-%m-%d')
+    logger.info(f"Look back at {window_start}")
+    query = "SELECT partition_date FROM archives WHERE registry_id = %s AND partition_date >= %s"
+    try:
+        with pg_conn.cursor() as cur:
+            cur.execute(query, (registry_id,window_start))
+            return {row[0] for row in cur.fetchall()}
+    except Exception as e:
+        logger.error(f"Table registry id {registry_id} error - {e}")
+        return set()
 
 def get_questdb_partitions(qdb_conn, table_name: str) -> Set[str]:
     """Query QuestDB to find existing completed daily partitions."""
@@ -86,9 +92,13 @@ def run_smart_backfill():
                 
                 logger.info(f"Processing table: {t_name} [{exch}]")
                 
+                # Get all availiable timestamp in YYYY-MM-DD format in questDB of bronze source
                 available_dates = get_questdb_partitions(qdb_conn, t_name)
+                
+                # Get all availiable timestamp in YYYY-MM-DD format in postgres of bronze source
                 archived_dates = get_archived_dates(pg_conn, r_id)
                 
+                # Check if any missing date that had not been archived
                 missing_dates = sorted(list(available_dates - archived_dates))
                 
                 if not missing_dates:
