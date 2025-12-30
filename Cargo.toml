@@ -3,6 +3,10 @@ members = [
     "crates/book"
 ]
 
+[workspace.package]
+edition = "2021"
+version = "1.0.0"
+
 resolver = "2"
 
 [workspace.dependencies]
