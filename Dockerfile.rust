@@ -1,16 +1,29 @@
-FROM rust:1.86-slim
+FROM rust:1.85-slim-bookworm AS builder
 
+# Required for 'ring', 'questdb-rs', and 'openssl'
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     libpq-dev \
-    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
+
+ENV RUSTC_BOOTSTRAP=1
 
 COPY . .
 
 RUN cargo build --release --bin book
 
-CMD ["./target/release/book"]
+FROM debian:bookworm-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    libpq5 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/src/app/target/release/book .
+
+CMD ["./book"]
