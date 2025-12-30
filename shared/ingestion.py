@@ -29,7 +29,6 @@ class BasePolymarketCollector(ABC):
         filename = f"{self.base_filename}_{current_date}.csv"
         self.csv_file_path = path.join(self.data_dir, filename) 
         
-        self.quest_db_sender = Sender.from_conf(quest_db_cfg.url)
 
     @abstractmethod
     def get_floored_epoch(self,offset=0) -> Any:
@@ -42,7 +41,7 @@ class BasePolymarketCollector(ABC):
         batch_rows = []
         last_flush = get_event_loop().time()
         
-        with self.quest_db_sender as sender:
+        with Sender.from_conf(quest_db_cfg.url) as sender:
             try:
                 while True:
                     try:
@@ -69,6 +68,7 @@ class BasePolymarketCollector(ABC):
                             last_flush = current_time
             except Exception as e:
                 logger.error(f"QuestDB Ingestion Error: {e}")
+                raise
             finally:
                 if batch_rows:
                     df_to_send = DataFrame(batch_rows, columns=columns)
@@ -323,7 +323,6 @@ class BasePolymarketCollector(ABC):
         """    
         while True:
             try:
-                # writer_task = create_task(self.csv_writer_task())
                 writer_task = create_task(self.ingest_quest_db())
                 orchestrator_task = create_task(self.manager())
                 
