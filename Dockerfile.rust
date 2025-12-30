@@ -1,4 +1,8 @@
 FROM rust:1.85-slim-bookworm as builder
+
+ENV RUSTC_BOOTSTRAP=1
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
@@ -17,7 +21,6 @@ RUN touch crates/book/src/main.rs && \
 FROM debian:bookworm-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-
 COPY --from=builder /app/target/release/book .
 
 CMD ["./book"]
