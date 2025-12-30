@@ -67,7 +67,7 @@ services:
   local-orderbook-service:
     <<: *rust-config
     container_name: local-orderbook-service
-    command: cargo r target/release/book
+    command: ./book
   
 
 networks:
