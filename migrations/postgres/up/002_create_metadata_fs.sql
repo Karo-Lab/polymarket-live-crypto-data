@@ -24,5 +24,5 @@ CREATE TABLE IF NOT EXISTS archives (
 
 CREATE INDEX IF NOT EXISTS idx_archives_registry_id ON archives(registry_id);
 
-INSERT INTO table_registry (table_name, data_layer,exchange,resolution,description)
-VALUES ('okx_live_price','BRONZE', 'okx','tick','Live L2 okx orderbook data')
+-- INSERT INTO table_registry (table_name, data_layer,exchange,resolution,description)
+-- VALUES ('okx_live_price','BRONZE', 'okx','tick','Live L2 okx orderbook data')

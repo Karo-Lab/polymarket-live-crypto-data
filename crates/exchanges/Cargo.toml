@@ -1,0 +1,14 @@
+[package]
+name = "exchanges"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rust_decimal.workspace = true
+crc32fast.workspace = true
+rand.workspace = true

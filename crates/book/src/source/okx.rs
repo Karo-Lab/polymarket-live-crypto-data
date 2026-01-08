@@ -166,15 +166,17 @@ impl OkxOrderBook {
                                                 }
                                                 self.updates(&data);
                                                 local_previous_seq_id = data.seq_id;
-        
-                                                let local_ob_cs = self.calculate_local_checksum();
-                                                if data.checksum !=  local_ob_cs {
-                                                    let _ = restart_signal_tx.send(self.instrument_id.clone()).await;
-                                                    let _ = audit_tx.try_send(AuditEvent::CheckSumFailure { 
-                                                        symbol: self.instrument_id.clone(), 
-                                                        expected: data.checksum, 
-                                                        actual: local_ob_cs,
-                                                    });
+                                                
+                                                if data.seq_id % 100 == 0 {
+                                                    let local_ob_cs = self.calculate_local_checksum();
+                                                    if data.checksum !=  local_ob_cs {
+                                                        let _ = restart_signal_tx.send(self.instrument_id.clone()).await;
+                                                        let _ = audit_tx.try_send(AuditEvent::CheckSumFailure { 
+                                                            symbol: self.instrument_id.clone(), 
+                                                            expected: data.checksum, 
+                                                            actual: local_ob_cs,
+                                                        });
+                                                    }   
                                                 }
                                             }
         

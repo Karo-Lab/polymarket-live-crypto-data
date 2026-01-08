@@ -1,0 +1,9 @@
+[package]
+name = "connectors"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+tokio.workspace = true
+
+exchanges.workspace = true

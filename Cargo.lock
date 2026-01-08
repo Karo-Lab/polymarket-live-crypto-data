@@ -32,6 +32,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "app"
+version = "1.0.0"
+dependencies = [
+ "core",
+ "dotenv",
+ "exchanges",
+ "rustls",
+ "tokio",
+ "tokio-util",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -262,6 +276,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "connectors"
+version = "1.0.0"
+dependencies = [
+ "exchanges",
+ "tokio",
+]
+
+[[package]]
+name = "core"
+version = "1.0.0"
+dependencies = [
+ "bytes",
+ "chrono",
+ "crc32fast",
+ "futures",
+ "futures-util",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -410,6 +450,20 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "exchanges"
+version = "1.0.0"
+dependencies = [
+ "core",
+ "crc32fast",
+ "rand 0.9.2",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+]
 
 [[package]]
 name = "fallible-iterator"

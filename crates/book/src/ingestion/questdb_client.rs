@@ -9,7 +9,6 @@ use crate::{common::config::QuestDBConfig, ingestion::orderbook::BookSnapShot, m
 pub struct QuestDBClient {
     sender: Sender,
     data_rx: mpsc::Receiver<Vec<BookSnapShot>>,
-    
 }
 
 impl QuestDBClient {
