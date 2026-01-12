@@ -1,5 +1,4 @@
 use std::env;
-use dotenv::dotenv;
 use tracing_appender::non_blocking;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -47,7 +46,7 @@ impl PostgresDBConfig {
         let port = env::var("POSTGRES_DB_PORT").expect("POSTGRESQL PORT configuration not found");
         let user = env::var("POSTGRES_DB_USER").expect("POSTGRESQL USER configuration not found");
         let password = env::var("POSTGRES_DB_PASSWORD").expect("POSTGRESQL PASSWORD configuration not found");
-        let db_name = env::var("POSTGRES_DB_PASSWORD").expect("POSTGRESQL DB_NAME configuration not found");
+        let db_name = env::var("POSTGRES_DB_NAME").expect("POSTGRESQL DB_NAME configuration not found");
      
         format!("postgresql://{}:{}@{}:{}/{}", user,password,host,port,db_name)
     }

@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS poly_live_price (
 	asks DOUBLE[][]
 ) timestamp(timestamp) PARTITION BY DAY WAL;
 
-CREATE TABLE IF NOT EXISTS okx_live_price ( 
+CREATE TABLE IF NOT EXISTS exchanges_live_price ( 
 	timestamp TIMESTAMP,
 	exchange_ts TIMESTAMP,
 	symbol SYMBOL,

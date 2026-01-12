@@ -1,5 +1,5 @@
 [package]
-name = "core"
+name = "exchanges-common"
 edition.workspace = true
 version.workspace = true
 
@@ -16,3 +16,8 @@ tokio-util.workspace = true
 chrono.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
+questdb-rs.workspace = true
+deadpool-postgres.workspace = true
+derive_builder.workspace = true
+

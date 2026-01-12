@@ -9,3 +9,13 @@ pub enum ConnectorError {
     #[error("unknown error: {0}")]
     Unknown(String)
 }
+
+#[derive(Debug, Error)]
+pub enum IngestionError {
+    #[error("Error pushing data: {0}")]
+    IngestionFailed(String),
+    #[error("Database error: {0}")]
+    DbError(String),
+    #[error("Type error: {0}")]
+    TypeError(String)
+}

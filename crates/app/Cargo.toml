@@ -10,8 +10,9 @@ tracing-subscriber.workspace = true
 tokio.workspace = true
 rustls.workspace = true
 tokio-util.workspace = true
-
+deadpool-postgres.workspace = true
 
 
 exchanges.workspace = true
-core.workspace = true
+exchanges-common.workspace = true
+connectors.workspace = true

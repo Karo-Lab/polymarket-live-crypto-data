@@ -14,10 +14,9 @@ CREATE TABLE IF NOT EXISTS poly_live_tbt (
 CREATE TABLE IF NOT EXISTS exchanges_live_tbt (
     timestamp TIMESTAMP,
 	receipt_time TIMESTAMP,
-	exchange_name VARCHAR,
+	exchange VARCHAR,
 	symbol SYMBOL,
 	side VARCHAR,
 	price DOUBLE,
 	size DOUBLE
 ) timestamp(timestamp) PARTITION BY HOUR TTL 3 days WAL; 
-

@@ -1,4 +1,4 @@
-use core::{error::ConnectorError, models::{HashWriter, OrderBookL2}, traits::{ExchangeAdapter, ExchangeConnectorAdapter}};
+use exchanges_common::{error::ConnectorError, models::{HashWriter, LevelDelta, OrderBookL2}, traits::{ExchangeAdapter, ExchangeConnectorAdapter}};
 use std::{borrow::Cow, str::FromStr};
 
 use crc32fast::Hasher;
@@ -35,8 +35,8 @@ pub struct OkxBookData<'a> {
     #[serde(borrow)]
     pub ts: Cow<'a, str>,
     pub checksum: i32,
-    pub seq_id: u64,
-    pub prev_seq_id: u64,
+    pub seq_id: i64,
+    pub prev_seq_id: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,47 +57,76 @@ impl ExchangeAdapter for OkxAdapter {
     type InputBookData<'a> = OkxOrderBookMesssage<'a>;
     const EXCHANGE_NAME : Cow<'_,str> = Cow::Borrowed("okx");
     
+    fn get_instrument<'a>(&self, msg: &'a Self::InputBookData<'_>) -> &'a str {
+        &msg.arg.inst_id
+    }
+    
+    fn get_timestamp<'a>(&self, _msg: &'a Self::InputBookData<'_>) -> i64 {
+        unimplemented!()
+    }
+    
     fn is_snapshot<'a>(&self, msg: &Self::InputBookData<'_>) -> bool {
         msg.action.as_ref() == "snapshot"
     }
-    fn get_seq_id<'a>(&self, msg: &Self::InputBookData<'_>) -> u64 {
+    fn get_seq_id<'a>(&self, msg: &Self::InputBookData<'_>) -> i64 {
         if let Some(d) = msg.data.first() {
             return d.seq_id;
         } else {
             return 0;
         }
     }
-    fn get_prev_seq_id<'a>(&self, msg: &Self::InputBookData<'_>) -> u64 {
+    fn get_prev_seq_id<'a>(&self, msg: &Self::InputBookData<'_>) -> i64 {
         if let Some(d) = msg.data.first() {
             return d.prev_seq_id;
         } else {
             return 0;
         }
     }
-    fn apply<'a>(&self,core: &mut OrderBookL2, msg: &Self::InputBookData<'_>) {
+    fn apply<'a, 'b>(&self,core: &'b mut OrderBookL2, msg: &Self::InputBookData<'_>) -> Vec<LevelDelta<'b>> {
+        let mut changes = Vec::new();
+        
         for delta in msg.data.iter() {
             for level in delta.asks.iter() {
                 let price = Decimal::from_str(&level.price).unwrap_or_default();
-                let size = Decimal::from_str(&level.size).unwrap_or_default();
+                let new_size = Decimal::from_str(&level.size).unwrap_or_default();
                 
-                if level.size.eq("0") {
-                    core.asks.remove(&price);
+                let old_size = if new_size.is_zero() {
+                    core.asks.remove(&price).unwrap_or_default()
                 } else {
-                    core.asks.insert(price, size);
+                    core.asks.insert(price, new_size).unwrap_or_default()
+                };
+                if old_size != new_size {
+                    changes.push(LevelDelta {
+                        side: "bid",
+                        price,
+                        old_size,
+                        new_size,
+                        diff: new_size - old_size,
+                    });
                 }
             }
             
             for level in delta.bids.iter() {
                 let price = Decimal::from_str(&level.price).unwrap_or_default();
-                let size = Decimal::from_str(&level.size).unwrap_or_default();
+                let new_size = Decimal::from_str(&level.size).unwrap_or_default();
                 
-                if level.size.eq("0") {
-                    core.bids.remove(&price);
+                let old_size = if new_size.is_zero() {
+                    core.bids.remove(&price).unwrap_or_default()
                 } else {
-                    core.bids.insert(price, size);
+                    core.bids.insert(price, new_size).unwrap_or_default()
+                };
+                if old_size != new_size {
+                    changes.push(LevelDelta {
+                        side: "ask",
+                        price,
+                        old_size,
+                        new_size,
+                        diff: new_size - old_size,
+                    });
                 }
             }
         }
+        changes
     }
     
     fn verify_integrity<'a>(&self, core: &OrderBookL2, msg: &Self::InputBookData<'_>) -> bool {
@@ -144,11 +173,20 @@ impl ExchangeAdapter for OkxAdapter {
         }
         hasher.finalize() == cs as u32
     }
+    fn get_asks<'a>(&self, _msg: &'a Self::InputBookData<'_>) -> &'a Vec<Vec<Cow<'a, str>>> {
+        unimplemented!()
+    }
+    fn get_bids<'a>(&self, _msg: &'a Self::InputBookData<'_>) -> &'a Vec<Vec<Cow<'a, str>>> {
+        unimplemented!()
+    }
 }
 
 pub struct OkxConnectorAdapter;
 
-impl ExchangeConnectorAdapter for OkxConnectorAdapter {    
+impl ExchangeConnectorAdapter for OkxConnectorAdapter {  
+    fn get_source_name(&self) -> String {
+        "Okx".to_string()
+    }
     fn get_url(&self) -> String {
         "wss://ws.okx.com:8443/ws/v5/public".to_string()
     }
@@ -189,7 +227,7 @@ impl ExchangeConnectorAdapter for OkxConnectorAdapter {
             if let Some(end) = bytes[start..].iter().position(|&b| b == b'"') {
                 let inst_id = &bytes[start..start + end];
                 
-                chunk[..pattern.len().min(16)].copy_from_slice(inst_id);
+                chunk[..inst_id.len().min(16)].copy_from_slice(inst_id);
                 
                 result = u128::from_le_bytes(chunk);
             } 
