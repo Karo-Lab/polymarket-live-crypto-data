@@ -12,3 +12,6 @@ serde_json.workspace = true
 rust_decimal.workspace = true
 crc32fast.workspace = true
 rand.workspace = true
+
+[lints]
+workspace = true

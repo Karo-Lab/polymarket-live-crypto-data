@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use exchanges_common::error::IngestionError;
 
+#[derive(Debug)]
 pub struct AuditActor {
     rx: mpsc::Receiver<AuditEvent>,
     buffer: Vec<AuditEvent>,
@@ -107,6 +108,7 @@ impl AuditActor {
     }
 }
 
+#[derive(Debug)]
 pub struct IngestionController<B> {
     backend: B,
 }
@@ -127,6 +129,7 @@ impl<B: IngestionBackend> IngestionController<B> {
     }
 }
 
+#[derive(Debug)]
 pub struct IngestionActor<B: IngestionBackend> {
     controller: IngestionController<B>,
     rx: mpsc::Receiver<IngestionEvent>,

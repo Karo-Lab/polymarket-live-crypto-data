@@ -1,24 +1,25 @@
 use crate::{
+    models::memstore::InMemoryStore,
     traits::{
-        ColumnValue, ExchangeAdapter, ExchangeConnectorAdapter, TableSchema,
-        WsReader, WsWriter,
+        Cache, ColumnValue, ExchangeAdapter, ExchangeConnectorAdapter, TableSchema, WsReader,
+        WsWriter,
     },
 };
 use chrono::{DateTime, Utc};
 use crc32fast::Hasher;
+use dashmap::DashMap;
 use derive_builder::Builder;
 use futures_util::{SinkExt, StreamExt};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    fmt::Display,
+    fmt::{Debug, Display},
+    hash::Hash,
     io::Write,
     sync::Arc,
 };
-use tokio::{
-    sync::{RwLock, mpsc}
-};
+use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message, Utf8Bytes},
@@ -144,6 +145,7 @@ pub struct LevelDelta<'b> {
     pub diff: Decimal,
 }
 
+#[derive(Debug)]
 pub struct HashWriter<'a>(pub &'a mut Hasher);
 
 impl<'a> Write for HashWriter<'a> {
@@ -191,6 +193,7 @@ pub enum BookAuditEvent {
     },
 }
 
+#[derive(Debug)]
 pub struct OrderBookActor<A: ExchangeAdapter> {
     adapter: A,
     command_receiver: mpsc::Receiver<OrderBookCommand>,
@@ -200,6 +203,7 @@ pub struct OrderBookActor<A: ExchangeAdapter> {
     shutdown_token: CancellationToken,
     book_core: OrderBookL2,
     state: BookState,
+    cache: Arc<InMemoryStore<String, Arc<String>>>,
 }
 impl<E> OrderBookActor<E>
 where
@@ -222,10 +226,23 @@ where
             shutdown_token,
             book_core: OrderBookL2::new(E::EXCHANGE_NAME.to_string()),
             state: BookState::AwaitingSnapshot,
+            cache: InMemoryStore::new(),
         }
     }
 
     pub async fn run(mut self) {
+        self.cache
+            .set("bid".to_string(), Arc::new("bid".to_string()))
+            .await;
+        self.cache
+            .set("ask".to_string(), Arc::new("ask".to_string()))
+            .await;
+        self.cache
+            .set("buy".to_string(), Arc::new("buy".to_string()))
+            .await;
+        self.cache
+            .set("sell".to_string(), Arc::new("sell".to_string()))
+            .await;
         loop {
             tokio::select! {
                 cmd = self.command_receiver.recv() => {
@@ -330,7 +347,7 @@ where
                                     }
                                 }
                                 self.book_core.last_seq_id = incoming_seq_id;
-                        
+
                                 if let Some(ts_now) = chrono::Utc::now().timestamp_nanos_opt() {
                                     let timestamp = self.book_core.ts.clone() * 1_000_000;
                                     let exchange = self.book_core.exchange.clone();
@@ -338,18 +355,26 @@ where
                                     let delta_changes = self.adapter.apply(&mut self.book_core, &v);
                                     tracing::debug!(?delta_changes, "Delta changes");
                                     for delta in delta_changes {
+                                        let cache_side = match self.cache.try_get(delta.side) {
+                                            Some(v) => v,
+                                            None => {
+                                                // Allocate in case of cache miss
+                                                self.cache.try_set(delta.side.to_string(), Arc::new(delta.new_size.to_string())).unwrap_or_default()
+                                                
+                                            },
+                                        };
+                                        
                                         let tick = BookTbT {
                                             exchange: exchange.clone(),
                                             instrument_id: instrument_id.clone(),
-                                            side: Arc::new(delta.side.to_string()),
+                                            side: cache_side.clone(),
                                             price: delta.price,
                                             size: delta.new_size,
                                             timestamp,
-                                            receipt_time: ts_now
+                                            receipt_time: ts_now,
                                         };
-                                        let _ = self
-                                            .ingestion_tx
-                                            .try_send(IngestionEvent::Tick(tick));
+                                        let _ =
+                                            self.ingestion_tx.try_send(IngestionEvent::Tick(tick));
                                     }
                                 }
 
@@ -415,6 +440,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct GenericExchangeConnector<A: ExchangeConnectorAdapter> {
     adapter: A,
     data_sender_map: HashMap<u128, mpsc::Sender<OrderBookCommand>>,
@@ -499,18 +525,19 @@ impl<A: ExchangeConnectorAdapter> GenericExchangeConnector<A> {
                         let reader = self.active_subs.read().await;
                         reader.contains(signal.as_ref())
                     };
-                    // if check {
-                    //     tracing::info!("Corrputed Signal received {:?}", signal);
-                    //     let symbols = [signal.as_ref().to_owned()];
 
-                    //     let un_sub = self.adapter.create_subscription(&symbols, true);
-                    //     let _ = ws_writer.send(un_sub).await;
+                    if check {
+                        tracing::info!("Corrputed Signal received {:?}", signal);
+                        let symbols = [signal.as_ref().to_owned()];
 
-                    //     let re_sub = self.adapter.create_subscription(&symbols, false);
-                    //     let _ = ws_writer.send(re_sub).await;
-                    // } else {
-                    //     tracing::info!("Corrputed Signal failed received {:?}", signal);
-                    // }
+                        let un_sub = self.adapter.create_subscription(&symbols, true);
+                        let _ = ws_writer.send(un_sub).await;
+
+                        let re_sub = self.adapter.create_subscription(&symbols, false);
+                        let _ = ws_writer.send(re_sub).await;
+                    } else {
+                        tracing::info!("Corrputed Signal failed received {:?}", signal);
+                    }
                 }
 
                 Some(msg) = ws_reader.next() => {
@@ -671,3 +698,75 @@ impl AuditEvent {
     }
 }
 
+pub mod memstore {
+    use super::{Arc, Cache, DashMap, Debug, Hash};
+
+    pub struct InMemoryStore<K, V> {
+        data: DashMap<K, V>,
+    }
+
+    impl<K, V> Debug for InMemoryStore<K, V>
+    where
+        K: Debug,
+        V: Debug,
+    {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("InMemoryStore")
+                .field("data", &"...")
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl<K, V> InMemoryStore<K, V>
+    where
+        K: Eq + Hash + Send + Sync + Clone,
+        V: Send + Sync + Clone,
+    {
+        #[must_use]
+        pub fn new() -> Arc<Self> {
+            Arc::new(Self {
+                data: DashMap::<K, V>::new(),
+            })
+        }
+    }
+
+    impl<K, V> Cache<K, V> for InMemoryStore<K, V>
+    where
+        K: Eq + Hash + Send + Sync + Clone + Debug,
+        V: Send + Sync + Clone + Debug,
+    {
+        /// Return a Cloned value from the map asynchronously
+        async fn get<Q>(&self, k: &Q) -> Option<V>
+        where
+            K: std::borrow::Borrow<Q>,
+            Q: Hash + Eq + Sync + ?Sized,
+        {
+            self.try_get(k)
+        }
+
+        /// Return a Cloned value from the map.
+        fn try_get<Q>(&self, k: &Q) -> Option<V>
+        where
+            K: std::borrow::Borrow<Q>,
+            Q: Hash + Eq + Sync + ?Sized,
+        {
+            self.data.get(k).map(|r| r.value().clone())
+        }
+        
+        async fn invalidate<Q>(&self, k: &Q)
+        where
+            K: std::borrow::Borrow<Q>,
+            Q: Hash + Eq + Sync + ?Sized,
+        {
+            self.data.remove(k);
+        }
+        
+        async fn set(&self, k: K, v: V) -> Option<V>{
+            self.try_set(k, v)
+        }
+        
+        fn try_set(&self, k: K, v: V) -> Option<V>{
+            self.data.insert(k, v)
+        }
+    }
+}

@@ -2,7 +2,7 @@ use exchanges_common::{
     models::{LevelDelta},
     traits::{ExchangeAdapter, ExchangeConnectorAdapter},
 };
-use std::{borrow::Cow, str::FromStr};
+use std::{borrow::Cow, str::FromStr, sync::Arc};
 
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -33,6 +33,7 @@ pub struct BybitBookMessageData<'a> {
     pub seq: i64,
 }
 
+#[derive(Debug)]
 pub struct BybitAdapter;
 
 impl ExchangeAdapter for BybitAdapter {
@@ -43,7 +44,7 @@ impl ExchangeAdapter for BybitAdapter {
         &msg.data.s
     }
 
-    fn is_snapshot<'a>(&self, msg: &Self::InputBookData<'_>) -> bool {
+    fn is_snapshot<'a>(&self, msg: &'a Self::InputBookData<'_>) -> bool {
         msg.event_type.as_ref() == "snapshot"
     }
 
@@ -51,16 +52,16 @@ impl ExchangeAdapter for BybitAdapter {
         msg.ts
     }
 
-    fn get_seq_id<'a>(&self, msg: &Self::InputBookData<'_>) -> i64 {
+    fn get_seq_id<'a>(&self, msg: &'a Self::InputBookData<'_>) -> i64 {
         msg.data.u
     }
-    fn get_prev_seq_id<'a>(&self, msg: &Self::InputBookData<'_>) -> i64 {
+    fn get_prev_seq_id<'a>(&self, msg: &'a Self::InputBookData<'_>) -> i64 {
         msg.data.u - 1i64
     }
     fn apply<'a, 'b>(
         &self,
         core: &'b mut exchanges_common::models::OrderBookL2,
-        msg: &Self::InputBookData<'_>,
+        msg: &'a Self::InputBookData<'_>,
     ) -> Vec<LevelDelta<'b>> {
         let mut changes = Vec::new();
 
@@ -120,6 +121,7 @@ impl ExchangeAdapter for BybitAdapter {
     }
 }
 
+#[derive(Debug)]
 pub struct BybitConnectorAdapter;
 
 impl ExchangeConnectorAdapter for BybitConnectorAdapter {

@@ -1,2 +1,2 @@
-pub mod questdb;
+pub mod ingestion;
 pub mod core;

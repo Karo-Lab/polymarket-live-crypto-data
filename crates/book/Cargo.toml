@@ -26,3 +26,6 @@ dotenv.workspace = true
 questdb-rs.workspace = true
 deadpool-postgres.workspace = true
 tokio-postgres.workspace = true
+
+[lints]
+workspace = true

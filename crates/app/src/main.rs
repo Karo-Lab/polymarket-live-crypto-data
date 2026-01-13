@@ -1,6 +1,6 @@
 mod config;
 
-use connectors::{core::{AuditActor, IngestionActor, IngestionController}, questdb::QuestDBClient};
+use connectors::{core::{AuditActor, IngestionActor, IngestionController}, ingestion::QuestDBClient};
 use exchanges_common::models::{
     AuditEvent, IngestionEvent,
 };
@@ -122,6 +122,7 @@ async fn main() {
     }
 }
 
+#[tracing::instrument()]
 async fn init_audit_actor(rx: mpsc::Receiver<AuditEvent>) -> AuditActor {
     let pg_env = PostgresDBConfig::load();
     let mut cfg = deadpool_postgres::Config::new();
@@ -144,6 +145,7 @@ async fn init_audit_actor(rx: mpsc::Receiver<AuditEvent>) -> AuditActor {
     AuditActor::new(rx, pool)
 }
 
+#[tracing::instrument()]
 fn init_ingestion_actor(rx: mpsc::Receiver<IngestionEvent>) -> IngestionActor<QuestDBClient> {
     let quest_env = QuestDBConfig::load();
     let quest_client = QuestDBClient::new(quest_env.db_url);

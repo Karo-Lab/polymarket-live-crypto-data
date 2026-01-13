@@ -51,6 +51,7 @@ pub struct OkxOrderLevel<'a> {
     pub count: Cow<'a, str>,
 }
 
+#[derive(Debug)]
 pub struct OkxAdapter;
 
 impl ExchangeAdapter for OkxAdapter {
@@ -65,24 +66,24 @@ impl ExchangeAdapter for OkxAdapter {
         unimplemented!()
     }
     
-    fn is_snapshot<'a>(&self, msg: &Self::InputBookData<'_>) -> bool {
+    fn is_snapshot<'a>(&self, msg: &'a Self::InputBookData<'_>) -> bool {
         msg.action.as_ref() == "snapshot"
     }
-    fn get_seq_id<'a>(&self, msg: &Self::InputBookData<'_>) -> i64 {
+    fn get_seq_id<'a>(&self, msg: &'a Self::InputBookData<'_>) -> i64 {
         if let Some(d) = msg.data.first() {
             return d.seq_id;
         } else {
             return 0;
         }
     }
-    fn get_prev_seq_id<'a>(&self, msg: &Self::InputBookData<'_>) -> i64 {
+    fn get_prev_seq_id<'a>(&self, msg: &'a Self::InputBookData<'_>) -> i64 {
         if let Some(d) = msg.data.first() {
             return d.prev_seq_id;
         } else {
             return 0;
         }
     }
-    fn apply<'a, 'b>(&self,core: &'b mut OrderBookL2, msg: &Self::InputBookData<'_>) -> Vec<LevelDelta<'b>> {
+    fn apply<'a, 'b>(&self,core: &'b mut OrderBookL2, msg: &'a Self::InputBookData<'_>) -> Vec<LevelDelta<'b>> {
         let mut changes = Vec::new();
         
         for delta in msg.data.iter() {
@@ -129,7 +130,7 @@ impl ExchangeAdapter for OkxAdapter {
         changes
     }
     
-    fn verify_integrity<'a>(&self, core: &OrderBookL2, msg: &Self::InputBookData<'_>) -> bool {
+    fn verify_integrity<'a>(&self, core: &OrderBookL2, msg: &'a Self::InputBookData<'_>) -> bool {
         let mut cs = 0;
         for data in msg.data.iter() {
             cs = data.checksum
@@ -181,6 +182,7 @@ impl ExchangeAdapter for OkxAdapter {
     }
 }
 
+#[derive(Debug)]
 pub struct OkxConnectorAdapter;
 
 impl ExchangeConnectorAdapter for OkxConnectorAdapter {  
