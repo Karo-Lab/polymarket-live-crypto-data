@@ -22,7 +22,7 @@ use crate::config::{PostgresDBConfig, QuestDBConfig, SystemLogging};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    let (_console_log_guard, _file_log_guard) = SystemLogging::init_logging("./logs", "app.log");
+    let (_console_log_guard, _file_log_guard) = SystemLogging::init_logging("./logs/crytp_orderbook_ingestion", "app.log");
     let _install_tls = {
         CryptoProvider::install_default(default_provider())
             .expect("Unable to install rusttls crypto provider")
