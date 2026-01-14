@@ -1,6 +1,9 @@
 use deadpool_postgres::Pool;
-use exchanges_common::models::{AuditEvent, IngestionEvent};
+use exchanges_common::telementry::{
+    AuditEvent, ErrorPayload, ErrorSeverity, IngestionEvent, LogEventCategory,
+};
 use exchanges_common::traits::{IngestionBackend, TableSchema};
+use exchanges_common::{log_error, log_info};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, MissedTickBehavior, interval};
@@ -9,29 +12,44 @@ use tokio_util::sync::CancellationToken;
 use exchanges_common::error::IngestionError;
 
 #[derive(Debug)]
-pub struct AuditActor {
+pub struct AuditClient {
     rx: mpsc::Receiver<AuditEvent>,
     buffer: Vec<AuditEvent>,
     pool: Pool,
     max_batch_time: Duration,
+    shutdown_token: CancellationToken,
 }
 
-impl AuditActor {
-    pub fn new(rx: mpsc::Receiver<AuditEvent>, pool: Pool) -> Self {
+impl AuditClient {
+    pub fn new(
+        rx: mpsc::Receiver<AuditEvent>,
+        pool: Pool,
+        shutdown_token: CancellationToken,
+    ) -> Self {
         Self {
             rx,
             buffer: Vec::with_capacity(100),
             pool,
             max_batch_time: Duration::from_secs(10),
+            shutdown_token,
         }
     }
 
-    #[tracing::instrument(skip(self, shutdown))]
-    pub async fn run(mut self, shutdown: CancellationToken) {
+    #[tracing::instrument(skip(self))]
+    pub async fn run(mut self) {
         let mut ticker = interval(self.max_batch_time);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
+            if self.shutdown_token.is_cancelled() {
+                log_info!(
+                    LogEventCategory::Audit,
+                    "shutdown",
+                    "audit",
+                    "AuditClient shutdown"
+                );
+                break;
+            }
             tokio::select! {
                 maybe_event = self.rx.recv() => {
                     match maybe_event {
@@ -58,9 +76,9 @@ impl AuditActor {
                     }
                 }
 
-                _ = shutdown.cancelled() => {
+                _ = self.shutdown_token.cancelled() => {
                     let _ = self.flush().await;
-                    tracing::info!("Audit actor shut down");
+                    log_info!(LogEventCategory::System,"shutdown","auditc_client","Audit client shut down");
                     break;
                 }
             }
@@ -88,6 +106,8 @@ impl AuditActor {
             .await
             .map_err(|e| IngestionError::DbError(e.to_string()))?;
 
+        let buffer_len = self.buffer.len();
+
         for event in self.buffer.drain(..) {
             client
                 .execute(
@@ -103,7 +123,12 @@ impl AuditActor {
                 .await
                 .map_err(|e| IngestionError::DbError(e.to_string()))?;
         }
-        tracing::info!("Inserted Auditlog");
+        log_info!(
+            LogEventCategory::Ingestion,
+            "audit",
+            "audit_service",
+            buffer_len
+        );
         Ok(())
     }
 }
@@ -130,42 +155,62 @@ impl<B: IngestionBackend> IngestionController<B> {
 }
 
 #[derive(Debug)]
-pub struct IngestionActor<B: IngestionBackend> {
+pub struct IngestionClient<B: IngestionBackend> {
     controller: IngestionController<B>,
     rx: mpsc::Receiver<IngestionEvent>,
     buffer: Vec<IngestionEvent>,
     max_batch_size: usize,
     max_batch_time: Duration,
+    shutdown_token: CancellationToken,
 }
 
-impl<B: IngestionBackend> IngestionActor<B> {
-    pub fn new(controller: IngestionController<B>, rx: mpsc::Receiver<IngestionEvent>) -> Self {
+impl<B: IngestionBackend> IngestionClient<B> {
+    pub fn new(
+        controller: IngestionController<B>,
+        rx: mpsc::Receiver<IngestionEvent>,
+        shutdown_token: CancellationToken,
+    ) -> Self {
         Self {
             controller,
             rx,
             buffer: Vec::with_capacity(2000),
             max_batch_size: 1000,
             max_batch_time: Duration::from_secs(10),
+            shutdown_token,
         }
     }
 
-    #[tracing::instrument(skip(self, shutdown))]
-    pub async fn run(mut self, shutdown: CancellationToken) {
+    #[tracing::instrument(skip(self))]
+    pub async fn run(mut self) {
         let mut ticker = interval(self.max_batch_time);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
+            if self.shutdown_token.is_cancelled() {
+                log_info!(
+                    LogEventCategory::Ingestion,
+                    "shutdown",
+                    "ingestion_client",
+                    "IngestionClient shut down"
+                );
+                break;
+            }
+
             tokio::select! {
                 maybe_event = self.rx.recv() => {
                     match maybe_event {
                         Some(event) => {
                             self.buffer.push(event);
                             if self.buffer.len() >= self.max_batch_size {
+                                let buffer_len = self.buffer.len();
                                 self.flush().await;
+                                log_info!(LogEventCategory::Ingestion, "flush", "ingestion_client", buffer_len);
                             }
                         },
                         None => {
+                            let buffer_len = self.buffer.len();
                             self.flush().await;
+                            log_info!(LogEventCategory::Ingestion, "flush", "ingestion_client", buffer_len);
                             break;
                         }
                     }
@@ -173,13 +218,15 @@ impl<B: IngestionBackend> IngestionActor<B> {
 
                 _ = ticker.tick() => {
                     if !self.buffer.is_empty() {
+                        let buffer_len = self.buffer.len();
                         self.flush().await;
+                        log_info!(LogEventCategory::Ingestion, "flush", "ingestion_client", buffer_len);
                     }
                 }
 
-                _ = shutdown.cancelled() => {
+                _ = self.shutdown_token.cancelled() => {
                     self.flush().await;
-                    tracing::info!("Ingestion actor shut down");
+                    log_info!(LogEventCategory::System,"cancelled","ingestion_client","Ingestion actor shutdown");
                     break;
                 }
             }
@@ -192,7 +239,19 @@ impl<B: IngestionBackend> IngestionActor<B> {
         }
 
         if let Err(e) = self.controller.ingest(&self.buffer).await {
-            tracing::error!("Ingestion Error: {:?}", e);
+            let err_str = e.to_string();
+            let error_payload = ErrorPayload::new(
+                "ingestion",
+                err_str.as_str(),
+                ErrorSeverity::Critical,
+                false,
+            );
+            log_error!(
+                LogEventCategory::Ingestion,
+                "ingestion",
+                "ingestion_service",
+                error_payload
+            );
         }
         self.buffer.clear();
     }

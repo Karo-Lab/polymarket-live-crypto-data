@@ -2,7 +2,7 @@ use exchanges_common::{
     models::{LevelDelta},
     traits::{ExchangeAdapter, ExchangeConnectorAdapter},
 };
-use std::{borrow::Cow, str::FromStr, sync::Arc};
+use std::{borrow::Cow, str::FromStr};
 
 use rust_decimal::Decimal;
 use serde::Deserialize;

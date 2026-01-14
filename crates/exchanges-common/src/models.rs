@@ -1,30 +1,35 @@
 use crate::{
-    models::memstore::InMemoryStore,
+    constants::{BACKOFF_PERIOD, TASK_DURATION_THRESHOLD},
+    log_error, log_info,
+    telementry::{
+        AuditEvent, AuditEventBuilder, AuditLevel, ErrorPayload, ErrorSeverity, IngestionEvent,
+        LogEventCategory, SystemEvent,
+    },
     traits::{
         Cache, ColumnValue, ExchangeAdapter, ExchangeConnectorAdapter, TableSchema, WsReader,
         WsWriter,
     },
+    utils::InMemoryStore,
 };
-use chrono::{DateTime, Utc};
 use crc32fast::Hasher;
-use dashmap::DashMap;
-use derive_builder::Builder;
 use futures_util::{SinkExt, StreamExt};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
-use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::{Debug, Display},
-    hash::Hash,
     io::Write,
     sync::Arc,
 };
-use tokio::sync::{RwLock, mpsc};
+use tokio::{
+    sync::{RwLock, mpsc},
+    time::{Duration, sleep},
+};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message, Utf8Bytes},
 };
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 #[derive(Debug)]
 pub enum OrderBookCommand {
@@ -37,6 +42,15 @@ impl Display for OrderBookCommand {
         match self {
             OrderBookCommand::Update(_) => write!(f, "Update"),
             OrderBookCommand::TakeSnapShot => write!(f, "Snapshot"),
+        }
+    }
+}
+
+impl AsRef<str> for OrderBookCommand {
+    fn as_ref(&self) -> &str {
+        match self {
+            OrderBookCommand::Update(_) => "Update",
+            OrderBookCommand::TakeSnapShot => "Snapshot",
         }
     }
 }
@@ -76,6 +90,21 @@ impl OrderBookL2 {
         } else {
             self.asks.insert(price, size);
         }
+    }
+    pub fn best_bid(&self) -> Option<&Decimal> {
+        self.bids.keys().next_back()
+    }
+
+    pub fn best_ask(&self) -> Option<&Decimal> {
+        self.asks.keys().next()
+    }
+
+    pub fn best_bid_size(&self) -> Option<&Decimal> {
+        self.bids.values().next_back()
+    }
+
+    pub fn best_ask_size(&self) -> Option<&Decimal> {
+        self.asks.values().next()
     }
 }
 
@@ -176,25 +205,18 @@ impl Display for BookState {
     }
 }
 
-#[derive(Debug)]
-pub enum BookAuditEvent {
-    SeqIdGap {
-        symbol: String,
-        expected: i64,
-        actual: i64,
-    },
-    CheckSumFailure {
-        symbol: String,
-        expected: i32,
-        actual: i32,
-    },
-    IngestFail {
-        details: Option<serde_json::Value>,
-    },
+impl AsRef<str> for BookState {
+    fn as_ref(&self) -> &str {
+        match self {
+            BookState::AwaitingSnapshot => "BookState::AwaitingSnapshot",
+            BookState::Synced => "BookState::Synced",
+            BookState::Corrupted => "BookState::Corrupted",
+        }
+    }
 }
 
 #[derive(Debug)]
-pub struct OrderBookActor<A: ExchangeAdapter> {
+pub struct LocalL2OrderBook<A: ExchangeAdapter> {
     adapter: A,
     command_receiver: mpsc::Receiver<OrderBookCommand>,
     restart_signal_tx: mpsc::Sender<Arc<String>>,
@@ -205,7 +227,7 @@ pub struct OrderBookActor<A: ExchangeAdapter> {
     state: BookState,
     cache: Arc<InMemoryStore<String, Arc<String>>>,
 }
-impl<E> OrderBookActor<E>
+impl<E> LocalL2OrderBook<E>
 where
     E: ExchangeAdapter,
 {
@@ -231,19 +253,36 @@ where
     }
 
     pub async fn run(mut self) {
-        self.cache
-            .set("bid".to_string(), Arc::new("bid".to_string()))
-            .await;
-        self.cache
-            .set("ask".to_string(), Arc::new("ask".to_string()))
-            .await;
-        self.cache
-            .set("buy".to_string(), Arc::new("buy".to_string()))
-            .await;
-        self.cache
-            .set("sell".to_string(), Arc::new("sell".to_string()))
-            .await;
+        {
+            let span = tracing::info_span!("actor_startup", service = "orderbook");
+            let _guard = span.enter();
+
+            tracing::info!("Warming up cache");
+            self.cache
+                .set("bid".to_string(), Arc::new("bid".to_string()))
+                .await;
+            self.cache
+                .set("ask".to_string(), Arc::new("ask".to_string()))
+                .await;
+            self.cache
+                .set("buy".to_string(), Arc::new("buy".to_string()))
+                .await;
+            self.cache
+                .set("sell".to_string(), Arc::new("sell".to_string()))
+                .await;
+            tracing::info!("Cache warm. Starting loop.");
+        }
+
         loop {
+            if self.shutdown_token.is_cancelled() {
+                log_info!(
+                    LogEventCategory::System,
+                    "shutdown",
+                    "local_l2_orderbook",
+                    "Local L2 orderbook shutdown"
+                );
+                break;
+            }
             tokio::select! {
                 cmd = self.command_receiver.recv() => {
                     match cmd {
@@ -256,6 +295,7 @@ where
                     }
                 }
                 _ = self.shutdown_token.cancelled() => {
+                    log_info!(LogEventCategory::System, "shutdown", "local_l2_orderbook", "Local L2 orderbook shutdown");
                     return ;
                 }
                 else => break
@@ -263,7 +303,14 @@ where
         }
     }
 
-    #[tracing::instrument(skip(self, command))]
+    #[tracing::instrument(
+        level = "info",
+        name = "handle_command",
+        skip(self, command),
+        fields(
+            cmd_type = %command.as_ref(),
+        )
+    )]
     fn process(&mut self, command: OrderBookCommand) {
         match command {
             OrderBookCommand::Update(data) => {
@@ -283,6 +330,18 @@ where
                                 self.book_core.last_seq_id = incoming_seq;
                                 self.book_core.ts = self.adapter.get_timestamp(&v);
                                 let state = BookState::Synced;
+
+                                let system_audit = SystemEvent::L2LOBState {
+                                    state: state.as_ref(),
+                                };
+
+                                log_info!(
+                                    LogEventCategory::System,
+                                    "book_state",
+                                    "orderbook",
+                                    system_audit
+                                );
+
                                 state
                             }
                             BookState::Synced => {
@@ -303,21 +362,32 @@ where
 
                                     match audit_event {
                                         Ok(event) => {
+                                            log_info!(
+                                                LogEventCategory::Audit,
+                                                "audit",
+                                                "orderbook",
+                                                event.clone()
+                                            );
                                             let _audit_seqence_failure =
                                                 self.audit_tx.try_send(event);
-                                            tracing::debug!(%state, id = incoming_seq_id,prev_id = self.book_core.last_seq_id, "Corrupted sequence detected: SeqGap");
                                         }
                                         Err(e) => {
-                                            tracing::error!(%e, "Unable to create audit message")
+                                            let error_payload = ErrorPayload::new(
+                                                "audit",
+                                                e.as_str(),
+                                                ErrorSeverity::Critical,
+                                                false,
+                                            );
+                                            log_error!(
+                                                LogEventCategory::Audit,
+                                                "audit",
+                                                "orderbook",
+                                                error_payload
+                                            )
                                         }
                                     }
                                     state = BookState::Corrupted;
                                 } else {
-                                    tracing::debug!(
-                                        "BBO: {:?} - BAO: {:?}",
-                                        self.book_core.bids.last_key_value(),
-                                        self.book_core.asks.first_key_value()
-                                    );
                                     if self.book_core.last_seq_id % 100 == 0 {
                                         state = if self
                                             .adapter
@@ -334,36 +404,58 @@ where
 
                                             match audit_event {
                                                 Ok(event) => {
+                                                    log_info!(
+                                                        LogEventCategory::Audit,
+                                                        "audit",
+                                                        "orderbook",
+                                                        event.clone()
+                                                    );
                                                     let _audit_seqence_failure =
                                                         self.audit_tx.try_send(event);
-                                                    tracing::debug!(%state, id = incoming_seq_id,prev_id = self.book_core.last_seq_id, "Corrupted sequence detected: CheckSum Failure");
                                                 }
                                                 Err(e) => {
-                                                    tracing::error!(%e, "Unable to create audit message")
+                                                    let error_payload = ErrorPayload::new(
+                                                        "audit",
+                                                        e.as_str(),
+                                                        ErrorSeverity::Critical,
+                                                        false,
+                                                    );
+                                                    log_info!(
+                                                        LogEventCategory::Audit,
+                                                        "audit",
+                                                        "orderbook",
+                                                        error_payload
+                                                    )
                                                 }
                                             }
                                             BookState::Corrupted
                                         };
                                     }
                                 }
+
                                 self.book_core.last_seq_id = incoming_seq_id;
 
                                 if let Some(ts_now) = chrono::Utc::now().timestamp_nanos_opt() {
                                     let timestamp = self.book_core.ts.clone() * 1_000_000;
                                     let exchange = self.book_core.exchange.clone();
                                     let instrument_id = self.book_core.instrument_id.clone();
+
                                     let delta_changes = self.adapter.apply(&mut self.book_core, &v);
-                                    tracing::debug!(?delta_changes, "Delta changes");
+
                                     for delta in delta_changes {
                                         let cache_side = match self.cache.try_get(delta.side) {
                                             Some(v) => v,
                                             None => {
                                                 // Allocate in case of cache miss
-                                                self.cache.try_set(delta.side.to_string(), Arc::new(delta.new_size.to_string())).unwrap_or_default()
-                                                
-                                            },
+                                                self.cache
+                                                    .try_set(
+                                                        delta.side.to_string(),
+                                                        Arc::new(delta.new_size.to_string()),
+                                                    )
+                                                    .unwrap_or_default()
+                                            }
                                         };
-                                        
+
                                         let tick = BookTbT {
                                             exchange: exchange.clone(),
                                             instrument_id: instrument_id.clone(),
@@ -381,6 +473,51 @@ where
                                 state
                             }
                             BookState::Corrupted => {
+                                let timestamp = self.book_core.ts.clone() * 1_000_000;
+
+                                {
+                                    let system_event = SystemEvent::L2LOBTop {
+                                        timestamp,
+                                        best_bid_price: self
+                                            .book_core
+                                            .best_bid()
+                                            .unwrap_or(&Decimal::ZERO)
+                                            .clone(),
+                                        best_bid_size: self
+                                            .book_core
+                                            .best_bid_size()
+                                            .unwrap_or(&Decimal::ZERO)
+                                            .clone(),
+                                        best_ask_price: self
+                                            .book_core
+                                            .best_ask()
+                                            .unwrap_or(&Decimal::ZERO)
+                                            .clone(),
+                                        best_ask_size: self
+                                            .book_core
+                                            .best_ask_size()
+                                            .unwrap_or(&Decimal::ZERO)
+                                            .clone(),
+                                    };
+                                    log_info!(
+                                        LogEventCategory::System,
+                                        "tick",
+                                        "local_lob",
+                                        system_event
+                                    );
+                                }
+
+                                let system_audit = SystemEvent::L2LOBState {
+                                    state: self.state.as_ref(),
+                                };
+
+                                log_info!(
+                                    LogEventCategory::System,
+                                    "book_state",
+                                    "orderbook",
+                                    system_audit
+                                );
+
                                 let _send_restart = self
                                     .restart_signal_tx
                                     .try_send(self.book_core.instrument_id.clone());
@@ -441,7 +578,7 @@ where
 }
 
 #[derive(Debug)]
-pub struct GenericExchangeConnector<A: ExchangeConnectorAdapter> {
+pub struct ExchangeConnector<A: ExchangeConnectorAdapter> {
     adapter: A,
     data_sender_map: HashMap<u128, mpsc::Sender<OrderBookCommand>>,
     restart_signal: mpsc::Receiver<Arc<String>>,
@@ -449,7 +586,7 @@ pub struct GenericExchangeConnector<A: ExchangeConnectorAdapter> {
     active_subs: Arc<RwLock<HashSet<String>>>,
 }
 
-impl<A: ExchangeConnectorAdapter> GenericExchangeConnector<A> {
+impl<A: ExchangeConnectorAdapter> ExchangeConnector<A> {
     pub fn new(
         adapter: A,
         data_sender_map: HashMap<u128, mpsc::Sender<OrderBookCommand>>,
@@ -465,9 +602,24 @@ impl<A: ExchangeConnectorAdapter> GenericExchangeConnector<A> {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn run(mut self) {
+        tracing::info!(
+            exchange = self.adapter.get_source_name(),
+            "Exchange connected"
+        );
         let mut backoff = 1u64;
+        let mut is_shutdowned = false;
         loop {
+            if self.shutdown_token.is_cancelled() {
+                log_info!(
+                    LogEventCategory::System,
+                    "shutdown",
+                    "exchange_connector",
+                    "Exchange connector shutdown"
+                );
+                break;
+            }
             let url = self.adapter.get_url();
             let mut _is_reconnected = false;
 
@@ -486,31 +638,63 @@ impl<A: ExchangeConnectorAdapter> GenericExchangeConnector<A> {
                         .collect();
 
                     let msg = self.adapter.create_subscription(&init_instruments, false);
-                    for inst in init_instruments.into_iter() {
+                    {
                         let mut writer = self.active_subs.write().await;
-                        tracing::info!(
-                            exchange = self.adapter.get_source_name(),
-                            instrument = inst,
-                            "Subscribed to"
-                        );
-                        writer.insert(inst);
-                        drop(writer);
+                        for inst in init_instruments.into_iter() {
+                            tracing::info!(
+                                exchange = self.adapter.get_source_name(),
+                                instrument = inst,
+                                "Subscribed to"
+                            );
+                            writer.insert(inst);
+                        }
                     }
-                    if let Ok(_) = ws_write.send(msg).await {
-                        self.handle_connection(&mut ws_write, &mut ws_read).await;
+                    if let Err(e) = ws_write.send(msg).await {
+                        tracing::error!("Error to send subscribe message {:?}", e);
                     } else {
-                        tracing::info!("Error to send subscribe message")
+                        let conn_start = tokio::time::Instant::now();
+
+                        let is_shutdown_requested =
+                            self.handle_connection(&mut ws_write, &mut ws_read).await;
+
+                        if is_shutdown_requested {
+                            log_info!(
+                                LogEventCategory::System,
+                                "shutdown",
+                                "book_data_connector",
+                                "BookDataConnector shutdowned"
+                            );
+                            break;
+                        }
+
+                        if conn_start.elapsed().as_secs() > TASK_DURATION_THRESHOLD {
+                            backoff = 1;
+                        }
                     }
                 }
-                Err(_e) => {}
+                Err(e) => {
+                    tracing::error!(error = ?e, "Failed to connect");
+                }
             }
-            tracing::info!(%backoff,"Sleep for");
-            tokio::time::sleep(tokio::time::Duration::from_secs(backoff)).await;
-            backoff = (backoff * 2).min(60);
+            tracing::warn!(%backoff, "Connection lost or failed. Retrying");
+
+            tokio::select! {
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(backoff)) => {
+                    backoff = (backoff * 2).min(60);
+                }
+                _ = self.shutdown_token.cancelled() => {
+                    tracing::info!("Shutdown received during backoff sleep");
+                    break;
+                }
+            }
         }
     }
 
-    async fn handle_connection(&mut self, ws_writer: &mut WsWriter, ws_reader: &mut WsReader) {
+    async fn handle_connection(
+        &mut self,
+        ws_writer: &mut WsWriter,
+        ws_reader: &mut WsReader,
+    ) -> bool {
         let ping_duration = self
             .adapter
             .ping_interval()
@@ -540,9 +724,9 @@ impl<A: ExchangeConnectorAdapter> GenericExchangeConnector<A> {
                     }
                 }
 
-                Some(msg) = ws_reader.next() => {
+                msg = ws_reader.next() => {
                     match msg {
-                        Ok(Message::Text(txt)) => {
+                        Some(Ok(Message::Text(txt))) => {
                             if let Ok(value) = self.adapter.route_message(&txt) {
                                 if let Some(tx) = self.data_sender_map.get(&value) {
                                     let _ = tx.try_send(OrderBookCommand::Update(txt.clone()));
@@ -551,33 +735,30 @@ impl<A: ExchangeConnectorAdapter> GenericExchangeConnector<A> {
                                 continue
                             }
                         }
-                        Ok(Message::Ping(p)) => {
+                        Some(Ok(Message::Ping(p))) => {
                             let _ = ws_writer.send(Message::Pong(p)).await;
                         }
-                        Ok(Message::Close(_)) => {
-                            break;
+                        Some(Ok(Message::Close(_))) => {
+                            return false;
                         }
-                        Err(_e) => {
-                            break;
+                        Some(Err(_e)) => {
+                            return false;
                         }
-                        _ => {}
+                        Some(_) => {}
+                        None => {
+                            return false;
+                        }
                     }
                 }
                 _ = ping_timer.tick() => {
                     self.adapter.create_ping(ws_writer);
                 }
                 _ = self.shutdown_token.cancelled() => {
-                    return;
+                    return true;
                 }
             }
         }
     }
-}
-
-#[derive(Debug)]
-pub enum IngestionEvent {
-    Snapshot(BookSnapShot),
-    Tick(BookTbT),
 }
 
 impl TableSchema for BookSnapShot {
@@ -619,154 +800,106 @@ impl TableSchema for BookTbT {
     }
 }
 
-impl TableSchema for IngestionEvent {
-    fn table_name(&self) -> &str {
-        match self {
-            IngestionEvent::Snapshot(s) => s.table_name(),
-            IngestionEvent::Tick(t) => t.table_name(),
-        }
-    }
-    fn get_columns(&self) -> Vec<(&str, ColumnValue<'_>)> {
-        match self {
-            IngestionEvent::Snapshot(s) => s.get_columns(),
-            IngestionEvent::Tick(t) => t.get_columns(),
-        }
-    }
+#[derive(Debug)]
+pub struct TaskSupervisor {
+    tracker: TaskTracker,
+    pub global_shutdown: CancellationToken,
 }
 
-#[derive(Debug, Clone)]
-pub enum AuditLevel {
-    Info,
-    Warning,
-    Error,
-    Critical,
-}
-
-impl AsRef<str> for AuditLevel {
-    fn as_ref(&self) -> &str {
-        match self {
-            AuditLevel::Critical => "critical",
-            AuditLevel::Error => "error",
-            AuditLevel::Warning => "warning",
-            AuditLevel::Info => "info",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Builder)]
-#[builder(pattern = "owned")]
-#[builder(setter(into))]
-pub struct AuditEvent {
-    #[builder(default = "Utc::now()")]
-    pub timestamp: DateTime<Utc>,
-    pub topic: String,
-    pub level: AuditLevel,
-    pub message: String,
-
-    #[builder(default, setter(strip_option))]
-    pub details: Option<Value>,
-}
-
-impl std::fmt::Display for AuditEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let ts = self.timestamp.to_rfc3339();
-        write!(
-            f,
-            "Timestamp: {} - topic: {} - level: {} - message: {}",
-            ts,
-            self.topic,
-            self.level.as_ref(),
-            self.message
-        )
-    }
-}
-
-impl AuditEvent {
-    pub fn new(
-        topic: impl Into<String>,
-        msg: impl Into<String>,
-        details: Option<Value>,
-        level: AuditLevel,
-    ) -> Self {
+impl TaskSupervisor {
+    pub fn new() -> Self {
         Self {
-            timestamp: Utc::now(),
-            topic: topic.into(),
-            level,
-            message: msg.into(),
-            details,
+            tracker: TaskTracker::new(),
+            global_shutdown: CancellationToken::new(),
         }
     }
-}
 
-pub mod memstore {
-    use super::{Arc, Cache, DashMap, Debug, Hash};
-
-    pub struct InMemoryStore<K, V> {
-        data: DashMap<K, V>,
-    }
-
-    impl<K, V> Debug for InMemoryStore<K, V>
+    /// Spawns a restartable service (e.g., Book Connector Data Feed).
+    /// The `task_factory` must capture any necessary config/tokens internally.
+    pub fn spawn_service<F, Fut>(&self, name: impl Into<String>, task_factory: F)
     where
-        K: Debug,
-        V: Debug,
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
     {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("InMemoryStore")
-                .field("data", &"...")
-                .finish_non_exhaustive()
-        }
+        let tracker = self.tracker.clone();
+        let global_shutdown = self.global_shutdown.clone();
+        let name = name.into();
+
+        tracker.spawn(async move {
+            tracing::info!("[{}] Supervisor started", name);
+
+            loop {
+                if global_shutdown.is_cancelled() {
+                    break;
+                }
+                let fut = task_factory();
+                let mut handle = tokio::spawn(fut);
+
+                tokio::select! {
+                    res = &mut handle => {
+                        match res {
+                            Ok(()) => {
+                                if global_shutdown.is_cancelled() {
+                                    break;
+                                }
+                                tracing::error!("[{}] Service exited unexpectedly. Restarting...", name);
+                            }
+                            Err(e) => {
+                                if e.is_panic() {
+                                    tracing::error!("[{}] CRITICAL: Service PANICKED! Restarting...", name);
+                                } else {
+                                    tracing::error!("[{}] Service cancelled by runtime.", name);
+                                }
+                            }
+                        }
+                    }
+
+                    _ = global_shutdown.cancelled() => {
+                        tracing::info!("[{}] Shutdown received. Aborting service...", name);
+                        handle.abort();
+                        break;
+                    }
+                }
+
+                tokio::select! {
+                    _ = sleep(Duration::from_secs(BACKOFF_PERIOD)) => {},
+                    _ = global_shutdown.cancelled() => {
+                        tracing::info!("[{}] Shutdown signal received while backing off.", name);
+                        break;
+                    }
+                }
+            }
+            tracing::info!("[{}] Supervisor stopped", name);
+        });
     }
 
-    impl<K, V> InMemoryStore<K, V>
+    /// Spawns a one-off worker (e.g., Local L2 Orderbook).
+    /// Does NOT restart on failure.
+    pub fn spawn_worker<F, Fut, E>(&self, name: impl Into<String>, task_factory: F)
     where
-        K: Eq + Hash + Send + Sync + Clone,
-        V: Send + Sync + Clone,
+        F: FnOnce(CancellationToken) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<(), E>> + Send + 'static,
+        E: Debug + Send + 'static,
     {
-        #[must_use]
-        pub fn new() -> Arc<Self> {
-            Arc::new(Self {
-                data: DashMap::<K, V>::new(),
-            })
-        }
+        let tracker = self.tracker.clone();
+        let shutdown = self.global_shutdown.clone();
+        let name = name.into();
+
+        tracker.spawn(async move {
+            tracing::info!("[{}] Worker started", name);
+            if let Err(e) = task_factory(shutdown).await {
+                tracing::error!("[{}] Worker failed: {:?}", name, e);
+            }
+            tracing::info!("[{}] Worker stopped", name);
+        });
     }
 
-    impl<K, V> Cache<K, V> for InMemoryStore<K, V>
-    where
-        K: Eq + Hash + Send + Sync + Clone + Debug,
-        V: Send + Sync + Clone + Debug,
-    {
-        /// Return a Cloned value from the map asynchronously
-        async fn get<Q>(&self, k: &Q) -> Option<V>
-        where
-            K: std::borrow::Borrow<Q>,
-            Q: Hash + Eq + Sync + ?Sized,
-        {
-            self.try_get(k)
-        }
+    pub async fn shutdown(self) {
+        tracing::info!("Global shutdown initiated...");
+        self.global_shutdown.cancel();
 
-        /// Return a Cloned value from the map.
-        fn try_get<Q>(&self, k: &Q) -> Option<V>
-        where
-            K: std::borrow::Borrow<Q>,
-            Q: Hash + Eq + Sync + ?Sized,
-        {
-            self.data.get(k).map(|r| r.value().clone())
-        }
-        
-        async fn invalidate<Q>(&self, k: &Q)
-        where
-            K: std::borrow::Borrow<Q>,
-            Q: Hash + Eq + Sync + ?Sized,
-        {
-            self.data.remove(k);
-        }
-        
-        async fn set(&self, k: K, v: V) -> Option<V>{
-            self.try_set(k, v)
-        }
-        
-        fn try_set(&self, k: K, v: V) -> Option<V>{
-            self.data.insert(k, v)
-        }
+        self.tracker.close();
+        self.tracker.wait().await;
+        tracing::info!("Graceful shutdown complete.");
     }
 }

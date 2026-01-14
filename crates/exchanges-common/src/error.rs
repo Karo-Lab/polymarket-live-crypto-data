@@ -19,3 +19,8 @@ pub enum IngestionError {
     #[error("Type error: {0}")]
     TypeError(String)
 }
+
+#[derive(Debug)]
+pub enum TaskError {
+    Panic
+}
