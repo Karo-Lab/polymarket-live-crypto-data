@@ -28,6 +28,8 @@ x-rust-config: &rust-config
     context: .
     dockerfile: Dockerfile.rust
   restart: unless-stopped
+  volumes:
+    - ./logs:/app/logs
   env_file:
     - .env
   networks:
@@ -67,7 +69,7 @@ services:
   local-orderbook-service:
     <<: *rust-config
     container_name: local-orderbook-service
-    command: ./book
+    command: ./app
   
 
 networks:
