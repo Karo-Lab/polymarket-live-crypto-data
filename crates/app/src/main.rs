@@ -22,7 +22,8 @@ use crate::config::{PostgresDBConfig, QuestDBConfig, SystemLogging};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    let (_console_log_guard, _file_log_guard) = SystemLogging::init_logging("./logs/crytp_orderbook_ingestion", "app.log");
+    let (_console_log_guard, _file_log_guard) =
+        SystemLogging::init_logging("./logs/crytp_orderbook_ingestion", "app.log");
     let _install_tls = {
         CryptoProvider::install_default(default_provider())
             .expect("Unable to install rusttls crypto provider")
@@ -34,6 +35,12 @@ async fn main() {
     let (ingestion_tx, ingestion_rx) = mpsc::channel::<IngestionEvent>(1024);
     let (audit_tx, audit_rx) = mpsc::channel::<AuditEvent>(1024);
 
+    // BTCUSDT orderbook channels
+    let (btc_cmd_tx, btc_cmd_rx) = mpsc::channel::<OrderBookCommand>(1024);
+    // ETHUSDT orderbook channels
+    let (eth_cmd_tx, eth_cmd_rx) = mpsc::channel::<OrderBookCommand>(1024);
+    // XRPUSDT orderbook channels
+    let (xrp_cmd_tx, xrp_cmd_rx) = mpsc::channel::<OrderBookCommand>(1024);
     // SOLUSDT orderbook channels
     let (sol_cmd_tx, sol_cmd_rx) = mpsc::channel::<OrderBookCommand>(1024);
 
@@ -41,9 +48,14 @@ async fn main() {
     let questdb_client = init_questdb_client();
 
     // Snapshot ticker
-    let snapshot_ticker = vec![sol_cmd_tx.clone()];
+    let snapshot_tickers = vec![
+            btc_cmd_tx.clone(), 
+            eth_cmd_tx.clone(), 
+            xrp_cmd_tx.clone(), 
+            sol_cmd_tx.clone()
+        ];
     supervisor.spawn_service("snapshot_ticker", move || {
-        let tickers = snapshot_ticker.clone();
+        let tickers = snapshot_tickers.clone();
         async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(50));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -85,19 +97,87 @@ async fn main() {
         ]),
         sol_cmd_tx.clone(),
     );
+    bybit_instrument_map.insert(
+        u128::from_le_bytes([
+            b'B', b'T', b'C', b'U', b'S', b'D', b'T', 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]),
+        btc_cmd_tx.clone(),
+    );
+    bybit_instrument_map.insert(
+        u128::from_le_bytes([
+            b'E', b'T', b'H', b'U', b'S', b'D', b'T', 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]),
+        eth_cmd_tx.clone(),
+    );
+    bybit_instrument_map.insert(
+        u128::from_le_bytes([
+            b'X', b'R', b'P', b'U', b'S', b'D', b'T', 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]),
+        xrp_cmd_tx.clone(),
+    );
 
     let bybit_sol_book_restart = restart_signal_tx.clone();
     let sol_cmd_rx_safe = sol_cmd_rx;
-
-    let book_shutdown = supervisor.global_shutdown.clone();
-
+    let sol_ingestion = ingestion_tx.clone();
+    let sol_audit = audit_tx.clone();
     supervisor.spawn_worker("bybit_sol_book", |token| async move {
         let book = LocalL2OrderBook::new(
             BybitAdapter,
             sol_cmd_rx_safe,
             bybit_sol_book_restart,
-            ingestion_tx,
-            audit_tx,
+            sol_ingestion,
+            sol_audit,
+            token,
+        );
+        book.run().await;
+        Ok::<(), String>(())
+    });
+    
+    let bybit_btc_book_restart = restart_signal_tx.clone();
+    let btc_cmd_rx_safe = btc_cmd_rx;
+    let btc_ingestion = ingestion_tx.clone();
+    let btc_audit = audit_tx.clone();
+    supervisor.spawn_worker("bybit_btc_book", |token| async move {
+        let book = LocalL2OrderBook::new(
+            BybitAdapter,
+            btc_cmd_rx_safe,
+            bybit_btc_book_restart,
+            btc_ingestion,
+            btc_audit,
+            token,
+        );
+        book.run().await;
+        Ok::<(), String>(())
+    });
+    
+    let bybit_eth_book_restart = restart_signal_tx.clone();
+    let eth_cmd_rx_safe = eth_cmd_rx;
+    let eth_ingestion = ingestion_tx.clone();
+    let eth_audit = audit_tx.clone();
+    supervisor.spawn_worker("bybit_eth_book", |token| async move {
+        let book = LocalL2OrderBook::new(
+            BybitAdapter,
+            eth_cmd_rx_safe,
+            bybit_eth_book_restart,
+            eth_ingestion,
+            eth_audit,
+            token,
+        );
+        book.run().await;
+        Ok::<(), String>(())
+    });
+    
+    let bybit_xrp_book_restart = restart_signal_tx.clone();
+    let xrp_cmd_rx_safe = xrp_cmd_rx;
+    let xrp_ingestion = ingestion_tx.clone();
+    let xrp_audit = audit_tx.clone();
+    supervisor.spawn_worker("bybit_xrp_book", |token| async move {
+        let book = LocalL2OrderBook::new(
+            BybitAdapter,
+            xrp_cmd_rx_safe,
+            bybit_xrp_book_restart,
+            xrp_ingestion,
+            xrp_audit,
             token,
         );
         book.run().await;

@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS poly_live_price (
 
 CREATE TABLE IF NOT EXISTS exchanges_live_price ( 
 	timestamp TIMESTAMP,
-	exchange_ts TIMESTAMP,
+	receipt_time TIMESTAMP,
 	symbol SYMBOL,
 	bids DOUBLE[][],
 	asks DOUBLE[][]
