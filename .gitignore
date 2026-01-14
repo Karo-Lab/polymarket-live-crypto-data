@@ -10,5 +10,6 @@ wheels/
 .venv
 
 .env
-logs
+logs/
 data/
+target/
