@@ -198,20 +198,19 @@ impl<B: IngestionBackend> IngestionClient<B> {
             }
 
             tokio::select! {
+                biased;
                 maybe_event = self.rx.recv() => {
                     match maybe_event {
                         Some(event) => {
                             self.buffer.push(event);
                             if self.buffer.len() >= self.max_batch_size {
-                                let buffer_len = self.buffer.len();
-                                self.flush().await;
-                                log_info!(LogEventCategory::Ingestion, "flush", "ingestion_actor", buffer_len);
+                                let flushed_len = self.flush().await;
+                                log_info!(LogEventCategory::Ingestion, "flush", "ingestion_actor", flushed_len);
                             }
                         },
                         None => {
-                            let buffer_len = self.buffer.len();
-                            self.flush().await;
-                            log_info!(LogEventCategory::Ingestion, "flush", "ingestion_actor", buffer_len);
+                            let flushed_len = self.flush().await;
+                            log_info!(LogEventCategory::Ingestion, "flush", "ingestion_actor", flushed_len);
                             break;
                         }
                     }
@@ -219,9 +218,8 @@ impl<B: IngestionBackend> IngestionClient<B> {
 
                 _ = ticker.tick() => {
                     if !self.buffer.is_empty() {
-                        let buffer_len = self.buffer.len();
-                        self.flush().await;
-                        log_info!(LogEventCategory::Ingestion, "flush", "ingestion_actor", buffer_len);
+                        let flushed_len = self.flush().await;
+                        log_info!(LogEventCategory::Ingestion, "flush", "ingestion_actor", flushed_len);
                     }
                 }
 
@@ -234,12 +232,16 @@ impl<B: IngestionBackend> IngestionClient<B> {
         }
     }
 
-    async fn flush(&mut self) {
+    async fn flush(&mut self) -> usize {
         if self.buffer.is_empty() {
-            return;
+            return 0;
         }
-
-        if let Err(e) = self.controller.ingest(&self.buffer).await {
+        
+        let mut ingested_batch = Vec::with_capacity(self.max_batch_size);
+        std::mem::swap(&mut ingested_batch, &mut self.buffer);
+        let n = ingested_batch.len();
+        
+        if let Err(e) = self.controller.ingest(&ingested_batch).await {
             let err_str = e.to_string();
             let error_payload = ErrorPayload::new(
                 "ingestion",
@@ -254,6 +256,7 @@ impl<B: IngestionBackend> IngestionClient<B> {
                 error_payload
             );
         }
-        self.buffer.clear();
+        
+        n
     }
 }
