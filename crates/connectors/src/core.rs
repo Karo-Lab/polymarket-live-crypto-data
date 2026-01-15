@@ -89,6 +89,7 @@ impl AuditClient {
         if self.buffer.is_empty() {
             return Ok(());
         }
+        
 
         let client =
             self.pool.get().await.map_err(|e| {
@@ -175,7 +176,7 @@ impl<B: IngestionBackend> IngestionClient<B> {
             rx,
             buffer: Vec::with_capacity(2000),
             max_batch_size: 1000,
-            max_batch_time: Duration::from_secs(10),
+            max_batch_time: Duration::from_secs(20),
             shutdown_token,
         }
     }
@@ -204,13 +205,13 @@ impl<B: IngestionBackend> IngestionClient<B> {
                             if self.buffer.len() >= self.max_batch_size {
                                 let buffer_len = self.buffer.len();
                                 self.flush().await;
-                                log_info!(LogEventCategory::Ingestion, "flush", "ingestion_client", buffer_len);
+                                log_info!(LogEventCategory::Ingestion, "flush", "ingestion_actor", buffer_len);
                             }
                         },
                         None => {
                             let buffer_len = self.buffer.len();
                             self.flush().await;
-                            log_info!(LogEventCategory::Ingestion, "flush", "ingestion_client", buffer_len);
+                            log_info!(LogEventCategory::Ingestion, "flush", "ingestion_actor", buffer_len);
                             break;
                         }
                     }
@@ -220,13 +221,13 @@ impl<B: IngestionBackend> IngestionClient<B> {
                     if !self.buffer.is_empty() {
                         let buffer_len = self.buffer.len();
                         self.flush().await;
-                        log_info!(LogEventCategory::Ingestion, "flush", "ingestion_client", buffer_len);
+                        log_info!(LogEventCategory::Ingestion, "flush", "ingestion_actor", buffer_len);
                     }
                 }
 
                 _ = self.shutdown_token.cancelled() => {
                     self.flush().await;
-                    log_info!(LogEventCategory::System,"cancelled","ingestion_client","Ingestion actor shutdown");
+                    log_info!(LogEventCategory::System,"cancelled","ingestion_actor","Ingestion actor shutdown");
                     break;
                 }
             }
