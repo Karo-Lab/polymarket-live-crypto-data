@@ -32,7 +32,7 @@ async fn main() {
     let supervisor = TaskSupervisor::new();
 
     let (restart_signal_tx, restart_signal_rx) = mpsc::channel(1);
-    let (ingestion_tx, ingestion_rx) = mpsc::channel::<IngestionEvent>(1024);
+    let (ingestion_tx, ingestion_rx) = mpsc::channel::<IngestionEvent>(10_000);
     let (audit_tx, audit_rx) = mpsc::channel::<AuditEvent>(1024);
 
     // BTCUSDT orderbook channels
