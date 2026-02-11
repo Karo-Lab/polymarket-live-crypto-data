@@ -609,7 +609,6 @@ impl<A: ExchangeConnectorAdapter> ExchangeConnector<A> {
             "Exchange connected"
         );
         let mut backoff = 1u64;
-        let mut is_shutdowned = false;
         loop {
             if self.shutdown_token.is_cancelled() {
                 log_info!(

@@ -3,16 +3,17 @@ FROM rustlang/rust:nightly-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev libpq-dev && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /usr/src/app
+WORKDIR /usr/src/workspace
 
 ENV RUSTFLAGS="-Z unstable-options"
 
-COPY . .
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 
-RUN cargo build --release --bin book
+RUN cargo build --release --package app
 
 FROM debian:bookworm-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates libssl3 libpq5 && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/src/app/target/release/book .
-CMD ["./book"]
+COPY --from=builder /usr/src/workspace/target/release/app ./app
+CMD ["./app"]

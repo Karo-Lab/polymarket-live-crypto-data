@@ -38,7 +38,6 @@ def get_archived_dates(pg_conn, registry_id: int) -> Set[str]:
 def get_questdb_partitions(qdb_conn, table_name: str) -> Set[str]:
     """Query QuestDB to find existing completed daily partitions."""
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
-    today_str = '2026-01-09'
     query = f"SELECT distinct timestamp::DATE FROM {table_name} WHERE timestamp < '{today_str}'::DATE"
     try:
         with qdb_conn.cursor() as cur:

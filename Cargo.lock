@@ -144,34 +144,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "book"
-version = "1.0.0"
-dependencies = [
- "bytes",
- "chrono",
- "colored",
- "crc32fast",
- "deadpool-postgres",
- "dotenv",
- "futures",
- "futures-util",
- "questdb-rs",
- "rand 0.9.2",
- "rust_decimal",
- "rust_decimal_macros",
- "rustls",
- "serde",
- "serde_json",
- "tokio",
- "tokio-postgres",
- "tokio-tungstenite",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "borsh"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -279,15 +251,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75443c44cd6b379beb8c5b45d85d0773baf31cce901fe7bb252f4eff3008ef7d"
 dependencies = [
  "cc",
-]
-
-[[package]]
-name = "colored"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
-dependencies = [
- "windows-sys 0.52.0",
 ]
 
 [[package]]
