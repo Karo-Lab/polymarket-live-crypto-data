@@ -1,0 +1,118 @@
+version: "3.9"
+
+x-common-config: &default-config
+  build:
+    context: .
+    dockerfile: Dockerfile.uv
+  restart: unless-stopped
+  volumes:
+    - ./data:/app/data
+    - ./logs:/app/logs
+  environment:
+    - ROTATION_INTERVAL=${ROTATION_INTERVAL}
+    - TOPIC=${TOPIC}
+    - GAMMA_ENDPOINT=${GAMMA_ENDPOINT}
+    - WS_URL=${WS_URL}
+    - QUEST_DB_HOST=${QUEST_DB_HOST}
+    - QUEST_DB_PORT=${QUEST_DB_PORT}
+    - QUEST_DB_PWP=${QUEST_DB_PWP}
+    - QUEST_DB_ILP=${QUEST_DB_ILP}
+    - QUEST_DB_HEALTH=${QUEST_DB_HEALTH}
+    - POSTGRES_DB_HOST=${POSTGRES_DB_HOST}
+    - POSTGRES_DB_PORT=${POSTGRES_DB_PORT}
+    - POSTGRES_DB_USER=${POSTGRES_DB_USER}
+    - POSTGRES_DB_PASSWORD=${POSTGRES_DB_PASSWORD}
+    - POSTGRES_DB_NAME=${POSTGRES_DB_NAME}
+    - ALL_PROXY=${ALL_PROXY}
+  networks:
+    - polymarket-backend
+
+x-script-config: &script-config
+  build:
+    context: .
+    dockerfile: Dockerfile.uv
+  restart: unless-stopped
+  environment:
+    - ROTATION_INTERVAL=${ROTATION_INTERVAL}
+    - TOPIC=${TOPIC}
+    - GAMMA_ENDPOINT=${GAMMA_ENDPOINT}
+    - WS_URL=${WS_URL}
+    - QUEST_DB_HOST=${QUEST_DB_HOST}
+    - QUEST_DB_PORT=${QUEST_DB_PORT}
+    - QUEST_DB_PWP=${QUEST_DB_PWP}
+    - QUEST_DB_ILP=${QUEST_DB_ILP}
+    - QUEST_DB_HEALTH=${QUEST_DB_HEALTH}
+    - POSTGRES_DB_HOST=${POSTGRES_DB_HOST}
+    - POSTGRES_DB_PORT=${POSTGRES_DB_PORT}
+    - POSTGRES_DB_USER=${POSTGRES_DB_USER}
+    - POSTGRES_DB_PASSWORD=${POSTGRES_DB_PASSWORD}
+    - POSTGRES_DB_NAME=${POSTGRES_DB_NAME}
+    - ALL_PROXY=${ALL_PROXY}
+  networks:
+    - polymarket-backend
+
+x-rust-config: &rust-config
+  build:
+    context: .
+    dockerfile: Dockerfile.rust
+  restart: unless-stopped
+  volumes:
+    - ./logs:/app/logs
+  environment:
+    - ROTATION_INTERVAL=${ROTATION_INTERVAL}
+    - TOPIC=${TOPIC}
+    - GAMMA_ENDPOINT=${GAMMA_ENDPOINT}
+    - WS_URL=${WS_URL}
+    - QUEST_DB_HOST=${QUEST_DB_HOST}
+    - QUEST_DB_PORT=${QUEST_DB_PORT}
+    - QUEST_DB_PWP=${QUEST_DB_PWP}
+    - QUEST_DB_ILP=${QUEST_DB_ILP}
+    - QUEST_DB_HEALTH=${QUEST_DB_HEALTH}
+    - POSTGRES_DB_HOST=${POSTGRES_DB_HOST}
+    - POSTGRES_DB_PORT=${POSTGRES_DB_PORT}
+    - POSTGRES_DB_USER=${POSTGRES_DB_USER}
+    - POSTGRES_DB_PASSWORD=${POSTGRES_DB_PASSWORD}
+    - POSTGRES_DB_NAME=${POSTGRES_DB_NAME}
+    - ALL_PROXY=${ALL_PROXY}
+  networks:
+    - polymarket-backend
+
+services:
+  polymarket-live-15m-crypto-data-collector:
+    <<: *default-config
+    container_name: polymarket-live-15m-crypto-data-collector
+    command: uv run python -m services.polymarket.15m.entrypoint
+
+  polymarket-live-1h-crypto-data-collector:
+    <<: *default-config
+    container_name: polymarket-live-1h-crypto-data-collector
+    command: uv run python -m services.polymarket.1h.entrypoint
+
+  polymarket-live-4h-crypto-data-collector:
+    <<: *default-config
+    container_name: polymarket-live-4h-crypto-data-collector
+    command: uv run python -m services.polymarket.4h.entrypoint
+
+  polymarket-live-daily-crypto-data-collector:
+    <<: *default-config
+    container_name: polymarket-live-daily-crypto-data-collector
+    command: uv run python -m services.polymarket.Daily.entrypoint
+
+  polymarket-live-daily-stocks-data-collector:
+    <<: *default-config
+    container_name: polymarket-live-daily-stocks-data-collector
+    command: uv run python -m services.polymarket.stocks.entrypoint
+
+  questdb-archiver:
+    <<: *script-config
+    container_name: questdb-archiver
+    command: uv run python -m scripts.cron.archiver
+
+  local-orderbook-service:
+    <<: *rust-config
+    container_name: local-orderbook-service
+    command: ./app
+
+networks:
+  polymarket-backend:
+    external: true

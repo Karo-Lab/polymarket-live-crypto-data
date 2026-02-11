@@ -6,11 +6,16 @@ use crate::{
 };
 use futures::stream::{SplitSink, SplitStream};
 use serde::Deserialize;
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Message};
 
-pub(crate) type WsWriter = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
-pub(crate) type WsReader = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
+pub trait AsyncStream: AsyncRead + AsyncWrite {}
+impl<T: AsyncRead + AsyncWrite + ?Sized> AsyncStream for T {}
+
+pub(crate) type BoxStream = Box<dyn AsyncStream + Send + Unpin>;
+pub(crate) type WsStream = WebSocketStream<MaybeTlsStream<BoxStream>>;
+pub(crate) type WsWriter = SplitSink<WsStream, Message>;
+pub(crate) type WsReader = SplitStream<WsStream>;
 
 pub trait ExchangeConnectorAdapter {
     fn get_source_name(&self) -> String;
@@ -95,7 +100,10 @@ pub trait Cache<K, V>: Send + Sync {
     where
         K: std::borrow::Borrow<Q>,
         Q: Hash + Eq + Sync + ?Sized;
-    
-    fn try_get<Q>(&self, k: &Q) -> Option<V> where K: std::borrow::Borrow<Q>, Q: Hash + Eq + Sync + ?Sized;
+
+    fn try_get<Q>(&self, k: &Q) -> Option<V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Hash + Eq + Sync + ?Sized;
     fn try_set(&self, k: K, v: V) -> Option<V>;
 }
