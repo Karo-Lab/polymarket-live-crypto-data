@@ -1,10 +1,12 @@
 from typing import List
-from common.logger import logger
+from common.logger import logger, setup_logger
 from asyncio import run
 from time import time
-from shared.core import BasePolymarketCollector
+from shared.ingestion import BasePolymarketCollector
 
-class LiveCrypto4hCollector(BasePolymarketCollector):
+setup_logger("live-crypto-15m-collector")
+
+class LiveCrypto15mCollector(BasePolymarketCollector):
     def __init__(self, base_filename: str, topics: List[str], rotation_interval: int, data_dir: str) -> None:
         super().__init__(
             base_filename, 
@@ -14,27 +16,26 @@ class LiveCrypto4hCollector(BasePolymarketCollector):
         )
     
     def get_floored_epoch(self,offset=0):
-        utc_offset = 7 * 3600  
         now = int(time())
-        local_now = now + utc_offset
-        floored_local = (local_now - (local_now % self.rotation_interval))
-        return (floored_local - utc_offset) + (offset * self.rotation_interval)
-        
+        return (now - (now % self.rotation_interval)) + (
+            offset * self.rotation_interval
+        )
+    
     def build_slug(self, slug_base: str, epoch):
         return f"{slug_base}-{epoch}"
 
 async def main():
     topics = [
-        "btc-updown-4h",
-        "eth-updown-4h",
-        "sol-updown-4h",
-        "xrp-updown-4h",
+        "btc-updown-15m",
+        "eth-updown-15m",
+        "sol-updown-15m",
+        "xrp-updown-15m",
     ]
-    live = LiveCrypto4hCollector(
+    live = LiveCrypto15mCollector(
         base_filename="polymarket-crypto-data",
         topics=topics,
-        rotation_interval=14400, #4h interval
-        data_dir="data/4hm"
+        rotation_interval=900,
+        data_dir="data/15m"
     )
     
     logger.info("Booting polymarket 15m live crypto price collector")

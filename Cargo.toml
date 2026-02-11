@@ -1,0 +1,53 @@
+[workspace]
+members = ["crates/app", "crates/connectors", "crates/exchanges-common", "crates/exchanges"]
+
+[workspace.package]
+edition = "2024"
+version = "1.0.0"
+
+resolver = "3"
+
+[workspace.dependencies]
+tokio = { version = "1.49.0", features = [ "full", "sync" ] }
+tokio-tungstenite = { version = "0.28.0", features = [ "rustls-tls-native-roots" ] }
+tokio-util = { version = "0.7.18", features=["default","rt"] }
+rustls = { version = "0.23.36", features = [ "ring" ] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1.0.149" }
+tracing = { version = "0.1.44", default-features = true }
+tracing-subscriber = { version = "0.3.22", features = [ "fmt", "time", "env-filter", "json"] }
+tracing-appender = { version = "0.2.4", default-features = true }
+dashmap = {version = "7.0.0-rc2", default-features = true}
+bytes = { version = "1.11.0" , default-features = true}
+async-trait = { version = "0.1.89" , default-features = true}
+futures-util = { version = "0.3.31" , default-features=true}
+futures = { version = "0.3.31" , default-features = true}
+dotenv = { version = "0.15.0" , default-features = true}
+reqwest = { version = "0.13.1", features = [ "json" ] }
+rand = { version = "0.9.2" , default-features = true}
+colored = { version = "3.0.0" , default-features = true}
+rust_decimal = { version = "1.39.0", default-features = true }
+rust_decimal_macros = { version = "1.39.0" , default-features = true}
+crc32fast = { version = "1.5.0" , features = ["default"]}
+chrono = { version = "0.4.42" ,features = ["default", "serde"]}
+questdb-rs = { version = "6.1.0" , features = ["default"]}
+deadpool-postgres = { version = "0.14.1" , features = ["default"]}
+tokio-postgres = { version = "0.7.15" , features = ["with-serde_json-1","with-chrono-0_4"]}
+thiserror = { version = "2.0.17" , features = ["default"]}
+derive_builder = { version = "0.20.2" , features = ["default"]}
+moka = { version = "0.12.12" ,features = ["future"]}
+
+# local dependecies
+exchanges-common = {path = "./crates/exchanges-common"}
+exchanges = {path = "./crates/exchanges"}
+connectors = {path = "./crates/connectors"}
+app = {path = "./crates/app"}
+
+[workspace.lints.rust]
+ambiguous_negative_literals = "warn"
+missing_debug_implementations = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"

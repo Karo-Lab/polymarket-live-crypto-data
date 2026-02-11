@@ -1,0 +1,2 @@
+DROP MATERIALIZED VIEW IF EXISTS polymarket_features_1s;
+DROP MATERIALIZED VIEW IF EXISTS okx_features_1s;
