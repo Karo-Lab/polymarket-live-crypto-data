@@ -8,7 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
-
+/target
 .env
 logs/
 data/

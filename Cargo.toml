@@ -36,6 +36,7 @@ tokio-postgres = { version = "0.7.15" , features = ["with-serde_json-1","with-ch
 thiserror = { version = "2.0.17" , features = ["default"]}
 derive_builder = { version = "0.20.2" , features = ["default"]}
 moka = { version = "0.12.12" ,features = ["future"]}
+tokio-socks = { version = "0.5.2" }
 
 # local dependecies
 exchanges-common = {path = "./crates/exchanges-common"}

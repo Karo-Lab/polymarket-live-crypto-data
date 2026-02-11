@@ -16,11 +16,20 @@ from json import dumps, loads
 from os import makedirs, path
 from typing import Any, Dict, List
 
-from aiohttp import ClientSession
+from aiohttp import (
+    ClientConnectionError,
+    ClientSession,
+    WSMsgType,
+    WSServerHandshakeError,
+)
 from pandas import DataFrame
 from questdb.ingress import Sender
 from typing_extensions import deprecated
-from websockets import ClientConnection, ConnectionClosed, connect
+
+try:
+    from aiohttp_socks import ProxyConnector
+except ImportError:  # pragma: no cover - optional dependency
+    ProxyConnector = None
 
 from common.config import config, quest_db_cfg
 from common.logger import logger
@@ -65,9 +74,7 @@ class BasePolymarketCollector(ABC):
             try:
                 while True:
                     try:
-                        row = await wait_for(
-                            queue.get(), timeout=0.1
-                        )
+                        row = await wait_for(queue.get(), timeout=0.1)
 
                         if row is None:  # Shutdown signal
                             break
@@ -85,7 +92,7 @@ class BasePolymarketCollector(ABC):
                     if batch_rows and (
                         len(batch_rows) >= batch_size
                         or (current_time - last_flush) >= flush_interval
-                    ):                        
+                    ):
                         if batch_rows:
                             df_to_send = DataFrame(batch_rows, columns=schema)
                             sender.dataframe(
@@ -167,7 +174,11 @@ class BasePolymarketCollector(ABC):
                 f.close()
 
     async def market_data_worker(
-        self, epoch, token_map: Dict[Any, Any], token_ids: List[str]
+        self,
+        session: ClientSession,
+        epoch,
+        token_map: Dict[Any, Any],
+        token_ids: List[str],
     ):
         """Handles the WebSocket connection for a specific epoch window."""
         if not token_ids:
@@ -184,18 +195,31 @@ class BasePolymarketCollector(ABC):
 
         while time.time() < expiry:
             try:
-                async with connect(ws_url) as ws:
+                async with session.ws_connect(ws_url) as ws:
                     subscribe_msg = {
                         "type": "market",
                         "initial_dump": False,
                         "assets_ids": token_ids,
                     }
-                    await ws.send(dumps(subscribe_msg))
+                    await ws.send_str(dumps(subscribe_msg))
                     ping_task = create_task(self.send_heartbeat(ws))
 
                     try:
                         while time.time() < expiry:
-                            message = await wait_for(ws.recv(), timeout=15.0)
+                            msg = await wait_for(ws.receive(), timeout=15.0)
+                            if msg.type == WSMsgType.TEXT:
+                                message = msg.data
+                            elif msg.type == WSMsgType.PONG:
+                                continue
+                            elif msg.type in (
+                                WSMsgType.CLOSE,
+                                WSMsgType.CLOSED,
+                                WSMsgType.ERROR,
+                            ):
+                                raise ClientConnectionError("WebSocket closed")
+                            else:
+                                continue
+
                             if not message:
                                 logger.warning("Empty message received, skipping...")
                                 continue
@@ -213,7 +237,6 @@ class BasePolymarketCollector(ABC):
 
                                     bids = data.get("bids", [])
                                     asks = data.get("asks", [])
-
 
                                     # Data processing
                                     bids_matrix = to_numpy_book(bids)
@@ -297,7 +320,12 @@ class BasePolymarketCollector(ABC):
                     finally:
                         ping_task.cancel()
 
-            except (ConnectionClosed, TimeoutError) as e:
+            except (
+                ClientConnectionError,
+                WSServerHandshakeError,
+                TimeoutError,
+                OSError,
+            ) as e:
                 logger.warning(
                     f"Worker {epoch} connection lost: {e}. Reconnecting in 2s"
                 )
@@ -305,11 +333,11 @@ class BasePolymarketCollector(ABC):
             except Exception as e:
                 logger.error(f"Worker Error for {epoch}: {e}")
 
-    async def send_heartbeat(self, ws: ClientConnection):
+    async def send_heartbeat(self, ws):
         """Sends 'PING' string every 10 seconds as required by Polymarket."""
         try:
             while True:
-                await ws.send("PING")
+                await ws.send_str("PING")
                 await sleep(10)
         except Exception:
             pass
@@ -363,9 +391,20 @@ class BasePolymarketCollector(ABC):
 
         return token_map, token_clob_ids
 
+    def _build_session(self) -> ClientSession:
+        proxy_url = config.ALL_PROXY
+        if proxy_url:
+            if ProxyConnector is None:
+                raise RuntimeError(
+                    "ALL_PROXY is set but aiohttp-socks is not installed."
+                )
+            connector = ProxyConnector.from_url(proxy_url)
+            return ClientSession(connector=connector)
+        return ClientSession()
+
     async def manager(self):
         """Orchestrates Hot and Cold tasks."""
-        async with ClientSession() as session:
+        async with self._build_session() as session:
             active_tasks = {}
 
             while True:
@@ -378,7 +417,9 @@ class BasePolymarketCollector(ABC):
                     )
                     if flat_ids:
                         active_tasks[current_epoch] = create_task(
-                            self.market_data_worker(current_epoch, token_map, flat_ids)
+                            self.market_data_worker(
+                                session, current_epoch, token_map, flat_ids
+                            )
                         )
 
                 # Pre-warm Cold task (Start before the current one ends)
@@ -393,7 +434,9 @@ class BasePolymarketCollector(ABC):
                     )
                     if flat_ids:
                         active_tasks[next_epoch] = create_task(
-                            self.market_data_worker(next_epoch, token_map, flat_ids)
+                            self.market_data_worker(
+                                session, next_epoch, token_map, flat_ids
+                            )
                         )
 
                 # Cleanup completed tasks
