@@ -36,9 +36,6 @@ class LiveCrypto5mCollector(BasePolymarketCollector):
 async def main():
     topics = [
         "btc-updown-5m",
-        "eth-updown-5m",
-        "sol-updown-5m",
-        "xrp-updown-5m",
     ]
     live = LiveCrypto5mCollector(
         base_filename="polymarket-crypto-data",

@@ -12,7 +12,7 @@ x-common-config: &default-config
     - .env
   networks:
     - polymarket-backend
-    
+
 x-script-config: &script-config
   build:
     context: .
@@ -24,7 +24,7 @@ x-script-config: &script-config
     - polymarket-backend
 
 x-rust-config: &rust-config
-  build: 
+  build:
     context: .
     dockerfile: Dockerfile.rust
   restart: unless-stopped
@@ -36,6 +36,11 @@ x-rust-config: &rust-config
     - polymarket-backend
 
 services:
+  polymarket-live-5m-crypto-data-collector:
+    <<: *default-config
+    container_name: polymarket-live-5m-crypto-data-collector
+    command: uv run python -m services.polymarket.5m.entrypoint
+
   polymarket-live-15m-crypto-data-collector:
     <<: *default-config
     container_name: polymarket-live-15m-crypto-data-collector
@@ -55,22 +60,21 @@ services:
     <<: *default-config
     container_name: polymarket-live-daily-crypto-data-collector
     command: uv run python -m services.polymarket.Daily.entrypoint
-  
+
   polymarket-live-daily-stocks-data-collector:
     <<: *default-config
     container_name: polymarket-live-daily-stocks-data-collector
     command: uv run python -m services.polymarket.stocks.entrypoint
-  
+
   questdb-archiver:
     <<: *script-config
     container_name: questdb-archiver
     command: uv run python -m scripts.cron.archiver
-  
+
   local-orderbook-service:
     <<: *rust-config
     container_name: local-orderbook-service
     command: ./app
-  
 
 networks:
   polymarket-backend:
