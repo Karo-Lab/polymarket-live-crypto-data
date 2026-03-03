@@ -7,7 +7,7 @@ pub enum ConnectorError {
     #[error("failed to parse symbol {0}")]
     ParseError(String),
     #[error("unknown error: {0}")]
-    Unknown(String)
+    Unknown(String),
 }
 
 #[derive(Debug, Error)]
@@ -17,10 +17,10 @@ pub enum IngestionError {
     #[error("Database error: {0}")]
     DbError(String),
     #[error("Type error: {0}")]
-    TypeError(String)
+    TypeError(String),
 }
 
 #[derive(Debug)]
 pub enum TaskError {
-    Panic
+    Panic,
 }

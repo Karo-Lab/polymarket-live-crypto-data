@@ -22,7 +22,8 @@ deadpool-postgres.workspace = true
 derive_builder.workspace = true
 dashmap.workspace = true
 moka.workspace = true
-tokio-socks.workspace = true
+slotmap.workspace = true
+
 
 [lints]
 workspace = true

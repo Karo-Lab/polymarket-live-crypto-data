@@ -1,13 +1,15 @@
-use std::{borrow::Cow, fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     error::{ConnectorError, IngestionError},
-    models::{LevelDelta, OrderBookL2},
+    models::NormalizedBookEvent,
 };
 use futures::stream::{SplitSink, SplitStream};
-use serde::Deserialize;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Message};
+use tokio::net::TcpStream;
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream,
+    tungstenite::{Message, http::Request},
+};
 
 pub trait AsyncStream: AsyncRead + AsyncWrite {}
 impl<T: AsyncRead + AsyncWrite + ?Sized> AsyncStream for T {}
@@ -19,47 +21,26 @@ pub(crate) type WsReader = SplitStream<WsStream>;
 
 pub trait ExchangeConnectorAdapter {
     fn get_source_name(&self) -> String;
-    fn get_url(&self) -> String;
+    fn get_url(&self) -> Result<Request<()>, ConnectorError>;
     fn create_subscription(&self, instruments: &[String], is_unsub: bool) -> Message;
-    fn route_message(&self, msg: &impl AsRef<[u8]>) -> Result<u128, ConnectorError>;
+    fn bootstrap_events(
+        &self,
+        _instruments: &[String],
+    ) -> impl std::future::Future<Output = Result<Vec<NormalizedBookEvent>, ConnectorError>> + Send
+    {
+        async { Ok(Vec::new()) }
+    }
+    fn parse_market_event(
+        &self,
+        _msg: &[u8],
+    ) -> Result<Option<NormalizedBookEvent>, ConnectorError> {
+        Ok(None)
+    }
     fn ping_interval(&self) -> Option<tokio::time::Duration> {
         None
     }
     fn create_ping(&self, _ws_writer: &mut WsWriter) -> Option<Message> {
         None
-    }
-}
-
-pub trait ExchangeAdapter {
-    type InputBookData<'a>: Send + Sync + Deserialize<'a>;
-    const EXCHANGE_NAME: Cow<'_, str>;
-
-    fn get_instrument<'a>(&self, msg: &'a Self::InputBookData<'_>) -> &'a str;
-
-    fn get_timestamp<'a>(&self, msg: &'a Self::InputBookData<'_>) -> i64;
-
-    fn is_snapshot<'a>(&self, msg: &Self::InputBookData<'a>) -> bool;
-
-    fn get_seq_id<'a>(&self, _msg: &Self::InputBookData<'a>) -> i64 {
-        0
-    }
-
-    fn get_prev_seq_id<'a>(&self, _msg: &Self::InputBookData<'a>) -> i64 {
-        0
-    }
-
-    fn get_bids<'a>(&self, msg: &'a Self::InputBookData<'_>) -> &'a Vec<Vec<Cow<'a, str>>>;
-
-    fn get_asks<'a>(&self, msg: &'a Self::InputBookData<'_>) -> &'a Vec<Vec<Cow<'a, str>>>;
-
-    fn apply<'a, 'b>(
-        &self,
-        core: &'b mut OrderBookL2,
-        msg: &Self::InputBookData<'a>,
-    ) -> Vec<LevelDelta<'b>>;
-
-    fn verify_integrity<'a>(&self, _core: &OrderBookL2, _msg: &Self::InputBookData<'a>) -> bool {
-        true
     }
 }
 

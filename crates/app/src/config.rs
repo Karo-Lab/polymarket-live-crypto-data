@@ -1,7 +1,11 @@
 use std::{env, path::Path};
 use tracing_appender::non_blocking;
 use tracing_subscriber::{
-    EnvFilter, fmt::{self, layer}, layer::SubscriberExt, registry, util::SubscriberInitExt
+    EnvFilter,
+    fmt::{self, layer},
+    layer::SubscriberExt,
+    registry,
+    util::SubscriberInitExt,
 };
 
 pub struct QuestDBConfig {
@@ -88,7 +92,7 @@ impl SystemLogging {
 
         // init file log storing
         let (file_writer, file_guard) = non_blocking(file_appender);
-        
+
         let file_layer = fmt::layer()
             .with_writer(file_writer)
             .json()

@@ -6,17 +6,19 @@ use connectors::{
 };
 use exchanges_common::{
     log_error, log_info,
-    models::TaskSupervisor,
+    models::{ExchangeConnector, OrderBookCommand, OrderBooksIndexerWorker, TaskSupervisor},
     telementry::{AuditEvent, ErrorPayload, ErrorSeverity, IngestionEvent, LogEventCategory},
 };
 
 use deadpool_postgres::{ManagerConfig, PoolConfig, Runtime, tokio_postgres::NoTls};
-use exchanges_common::models::{ExchangeConnector, LocalL2OrderBook, OrderBookCommand};
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
-use exchanges::bybit::{BybitAdapter, BybitConnectorAdapter};
+use exchanges::{binance::BinanceConnectorAdapter, bybit::BybitConnectorAdapter};
 use rustls::crypto::{CryptoProvider, ring::default_provider};
-use tokio::{sync::mpsc, time::sleep};
+use tokio::{
+    sync::{broadcast, mpsc},
+    time::sleep,
+};
 
 use crate::config::{PostgresDBConfig, QuestDBConfig, SystemLogging};
 
@@ -31,164 +33,91 @@ async fn main() {
 
     let supervisor = TaskSupervisor::new();
 
-    let (restart_signal_tx, restart_signal_rx) = mpsc::channel(1);
+    let (restart_signal_tx, _) = broadcast::channel(1024);
     let (ingestion_tx, ingestion_rx) = mpsc::channel::<IngestionEvent>(10_000);
     let (audit_tx, audit_rx) = mpsc::channel::<AuditEvent>(1024);
+    let (book_cmd_tx, book_cmd_rx) = mpsc::channel::<OrderBookCommand>(32_768);
 
-    // BTCUSDT orderbook channels
-    let (btc_cmd_tx, btc_cmd_rx) = mpsc::channel::<OrderBookCommand>(1024);
-    // ETHUSDT orderbook channels
-    let (eth_cmd_tx, eth_cmd_rx) = mpsc::channel::<OrderBookCommand>(1024);
-    // XRPUSDT orderbook channels
-    let (xrp_cmd_tx, xrp_cmd_rx) = mpsc::channel::<OrderBookCommand>(1024);
-    // SOLUSDT orderbook channels
-    let (sol_cmd_tx, sol_cmd_rx) = mpsc::channel::<OrderBookCommand>(1024);
-
-    let pg_pool = init_postgres_pool().await;
-    let questdb_client = init_questdb_client();
+    // let pg_pool = init_postgres_pool().await;
+    // let questdb_client = init_questdb_client();
 
     // Snapshot ticker
-    let snapshot_tickers = vec![
-            btc_cmd_tx.clone(), 
-            eth_cmd_tx.clone(), 
-            xrp_cmd_tx.clone(), 
-            sol_cmd_tx.clone()
-        ];
+    let snapshot_ticker = book_cmd_tx.clone();
     supervisor.spawn_service("snapshot_ticker", move || {
-        let tickers = snapshot_tickers.clone();
+        let tx = snapshot_ticker.clone();
         async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(50));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
                 interval.tick().await;
-                for tx in &tickers {
-                    let _ = tx.try_send(OrderBookCommand::TakeSnapShot);
-                }
+                let _ = tx.try_send(OrderBookCommand::TakeSnapShot);
             }
         }
     });
 
-    supervisor.spawn_worker("audit_actor", |token| async move {
-        let client = AuditClient::new(audit_rx, pg_pool, token.clone());
-        client.run().await;
+    // supervisor.spawn_worker("audit_worket", |token| async move {
+    //     let client = AuditClient::new(audit_rx, pg_pool, token.clone());
+    //     client.run().await;
+    //     Ok::<(), String>(())
+    // });
+
+    // supervisor.spawn_worker("ingestion_worker", |token| async move {
+    //     let controller = IngestionController::new(questdb_client);
+    //     let client = IngestionClient::new(controller, ingestion_rx, token.clone());
+    //     client.run().await;
+    //     Ok::<(), String>(())
+    // });
+
+    let ecs_restart_signal_tx = restart_signal_tx.clone();
+    let ecs_ingestion_tx = ingestion_tx.clone();
+    let ecs_audit_tx = audit_tx.clone();
+    supervisor.spawn_worker("orderbook_indexer_worker", |token| async move {
+        let engine = OrderBooksIndexerWorker::new(
+            book_cmd_rx,
+            ecs_restart_signal_tx,
+            ecs_ingestion_tx,
+            ecs_audit_tx,
+            token,
+        );
+        engine.run().await;
         Ok::<(), String>(())
     });
 
-    // Init ingestion actor
-    supervisor.spawn_worker("ingestion_actor", |token| async move {
-        let controller = IngestionController::new(questdb_client);
-        let client = IngestionClient::new(controller, ingestion_rx, token.clone());
-        client.run().await;
-        Ok::<(), String>(())
-    });
-
-    let mut okx_instrument_map = HashMap::new();
-    okx_instrument_map.insert(
-        u128::from_le_bytes([
-            b'S', b'O', b'L', b'-', b'U', b'S', b'D', b'T', b'-', b'S', b'W', b'A', b'P', 0, 0, 0,
-        ]),
-        sol_cmd_tx.clone(),
-    );
-    let mut bybit_instrument_map = HashMap::new();
-    bybit_instrument_map.insert(
-        u128::from_le_bytes([
-            b'S', b'O', b'L', b'U', b'S', b'D', b'T', 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ]),
-        sol_cmd_tx.clone(),
-    );
-    bybit_instrument_map.insert(
-        u128::from_le_bytes([
-            b'B', b'T', b'C', b'U', b'S', b'D', b'T', 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ]),
-        btc_cmd_tx.clone(),
-    );
-    bybit_instrument_map.insert(
-        u128::from_le_bytes([
-            b'E', b'T', b'H', b'U', b'S', b'D', b'T', 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ]),
-        eth_cmd_tx.clone(),
-    );
-    bybit_instrument_map.insert(
-        u128::from_le_bytes([
-            b'X', b'R', b'P', b'U', b'S', b'D', b'T', 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ]),
-        xrp_cmd_tx.clone(),
-    );
-
-    let bybit_sol_book_restart = restart_signal_tx.clone();
-    let sol_cmd_rx_safe = sol_cmd_rx;
-    let sol_ingestion = ingestion_tx.clone();
-    let sol_audit = audit_tx.clone();
-    supervisor.spawn_worker("bybit_sol_book", |token| async move {
-        let book = LocalL2OrderBook::new(
-            BybitAdapter,
-            sol_cmd_rx_safe,
-            bybit_sol_book_restart,
-            sol_ingestion,
-            sol_audit,
-            token,
-        );
-        book.run().await;
-        Ok::<(), String>(())
-    });
-    
-    let bybit_btc_book_restart = restart_signal_tx.clone();
-    let btc_cmd_rx_safe = btc_cmd_rx;
-    let btc_ingestion = ingestion_tx.clone();
-    let btc_audit = audit_tx.clone();
-    supervisor.spawn_worker("bybit_btc_book", |token| async move {
-        let book = LocalL2OrderBook::new(
-            BybitAdapter,
-            btc_cmd_rx_safe,
-            bybit_btc_book_restart,
-            btc_ingestion,
-            btc_audit,
-            token,
-        );
-        book.run().await;
-        Ok::<(), String>(())
-    });
-    
-    let bybit_eth_book_restart = restart_signal_tx.clone();
-    let eth_cmd_rx_safe = eth_cmd_rx;
-    let eth_ingestion = ingestion_tx.clone();
-    let eth_audit = audit_tx.clone();
-    supervisor.spawn_worker("bybit_eth_book", |token| async move {
-        let book = LocalL2OrderBook::new(
-            BybitAdapter,
-            eth_cmd_rx_safe,
-            bybit_eth_book_restart,
-            eth_ingestion,
-            eth_audit,
-            token,
-        );
-        book.run().await;
-        Ok::<(), String>(())
-    });
-    
-    let bybit_xrp_book_restart = restart_signal_tx.clone();
-    let xrp_cmd_rx_safe = xrp_cmd_rx;
-    let xrp_ingestion = ingestion_tx.clone();
-    let xrp_audit = audit_tx.clone();
-    supervisor.spawn_worker("bybit_xrp_book", |token| async move {
-        let book = LocalL2OrderBook::new(
-            BybitAdapter,
-            xrp_cmd_rx_safe,
-            bybit_xrp_book_restart,
-            xrp_ingestion,
-            xrp_audit,
-            token,
-        );
-        book.run().await;
-        Ok::<(), String>(())
-    });
-
-    supervisor.spawn_worker("exchange_connector", |token| async move {
+    let bybit_instruments = vec![
+        "SOLUSDT".to_string(),
+        "BTCUSDT".to_string(),
+        "ETHUSDT".to_string(),
+        "XRPUSDT".to_string(),
+    ];
+    let bybit_data_sender = book_cmd_tx.clone();
+    let bybit_restart_rx = restart_signal_tx.subscribe();
+    supervisor.spawn_worker("bybit_exchange_connector", |token| async move {
         let conn = ExchangeConnector::new(
             BybitConnectorAdapter,
-            bybit_instrument_map,
-            restart_signal_rx,
+            bybit_instruments,
+            bybit_data_sender,
+            bybit_restart_rx,
+            token,
+        );
+        conn.run().await;
+        Ok::<(), String>(())
+    });
+
+    let binance_instruments = vec![
+        "btcusdt".to_string(),
+        "ethusdt".to_string(),
+        "solusdt".to_string(),
+        "xrpusdt".to_string(),
+    ];
+    let binance_data_sender = book_cmd_tx.clone();
+    let binance_restart_rx = restart_signal_tx.subscribe();
+    supervisor.spawn_worker("binance_exchange_connector", |token| async move {
+        let conn = ExchangeConnector::new(
+            BinanceConnectorAdapter::default(),
+            binance_instruments,
+            binance_data_sender,
+            binance_restart_rx,
             token,
         );
         conn.run().await;

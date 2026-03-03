@@ -39,14 +39,14 @@ impl AuditClient {
     pub async fn run(mut self) {
         let mut ticker = interval(self.max_batch_time);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
+        tracing::info!("Starting audit worker");
         loop {
             if self.shutdown_token.is_cancelled() {
                 log_info!(
                     LogEventCategory::Audit,
                     "shutdown",
                     "audit",
-                    "AuditClient shutdown"
+                    "AuditWorker shutdown"
                 );
                 break;
             }
@@ -89,7 +89,6 @@ impl AuditClient {
         if self.buffer.is_empty() {
             return Ok(());
         }
-        
 
         let client =
             self.pool.get().await.map_err(|e| {
@@ -100,7 +99,7 @@ impl AuditClient {
             .prepare_cached(
                 "
             INSERT INTO pipeline_audit
-            (timestamp, topic, level, message, details)
+            (ts, topic, level, message, details)
             VALUES ($1, $2, $3, $4, $5)
         ",
             )
@@ -236,11 +235,11 @@ impl<B: IngestionBackend> IngestionClient<B> {
         if self.buffer.is_empty() {
             return 0;
         }
-        
+
         let mut ingested_batch = Vec::with_capacity(self.max_batch_size);
         std::mem::swap(&mut ingested_batch, &mut self.buffer);
         let n = ingested_batch.len();
-        
+
         if let Err(e) = self.controller.ingest(&ingested_batch).await {
             let err_str = e.to_string();
             let error_payload = ErrorPayload::new(
@@ -256,7 +255,7 @@ impl<B: IngestionBackend> IngestionClient<B> {
                 error_payload
             );
         }
-        
+
         n
     }
 }
