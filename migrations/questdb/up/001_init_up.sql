@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS poly_live_price (
 	token_name VARCHAR,
 	bids DOUBLE[][],
 	asks DOUBLE[][]
-) timestamp(timestamp) PARTITION BY DAY WAL TTL 3 days;
+) timestamp(timestamp) PARTITION BY DAY TTL 3 days WAL;
 
 CREATE TABLE IF NOT EXISTS poly_live_tbt (
     timestamp TIMESTAMP,

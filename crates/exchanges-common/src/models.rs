@@ -5,7 +5,10 @@ use crate::{
         AuditEvent, AuditEventBuilder, AuditLevel, ErrorPayload, ErrorSeverity, IngestionEvent,
         LogEventCategory,
     },
-    traits::{ColumnValue, ExchangeConnectorAdapter, TableSchema, WsReader, WsWriter},
+    traits::{
+        BoxStream, ColumnValue, ExchangeConnectorAdapter, TableSchema, WsError, WsReader,
+        WsStream, WsWriter,
+    },
 };
 use futures_util::{SinkExt, StreamExt};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
@@ -16,10 +19,11 @@ use std::{
     sync::Arc,
 };
 use tokio::{
+    net::TcpStream,
     sync::{RwLock, broadcast, mpsc},
     time::{Duration, sleep},
 };
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{client_async_tls_with_config, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -765,7 +769,7 @@ impl<A: ExchangeConnectorAdapter> ExchangeConnector<A> {
             };
             let mut _is_reconnected = false;
 
-            match connect_async(request).await {
+            match connect_ws(request).await {
                 Ok((websocket_, _)) => {
                     backoff = 1u64;
                     let (mut ws_write, mut ws_read) = websocket_.split();
@@ -927,30 +931,10 @@ impl<A: ExchangeConnectorAdapter> ExchangeConnector<A> {
     }
 }
 
-fn parse_socks_proxy(proxy_url: &str) -> Result<(String, u16), io::Error> {
-    let uri: Uri = proxy_url
-        .parse()
-        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
-    let scheme = uri.scheme_str().unwrap_or_default();
-    if scheme != "socks5" && scheme != "socks5h" {
-        return Err(io::Error::new(
-            ErrorKind::InvalidInput,
-            "ALL_PROXY must be socks5:// or socks5h://",
-        ));
-    }
+fn target_host_port(uri: &tokio_tungstenite::tungstenite::http::Uri) -> Result<(String, u16), std::io::Error> {
     let host = uri
         .host()
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "ALL_PROXY missing host"))?;
-    let port = uri
-        .port_u16()
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "ALL_PROXY missing port"))?;
-    Ok((host.to_string(), port))
-}
-
-fn target_host_port(uri: &Uri) -> Result<(String, u16), io::Error> {
-    let host = uri
-        .host()
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "WebSocket URL missing host"))?;
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "WebSocket URL missing host"))?;
     let port = uri.port_u16().unwrap_or_else(|| match uri.scheme_str() {
         Some("wss") | Some("https") => 443,
         Some("ws") | Some("http") => 80,
@@ -959,31 +943,15 @@ fn target_host_port(uri: &Uri) -> Result<(String, u16), io::Error> {
     Ok((host.to_string(), port))
 }
 
-async fn connect_ws(url: &str) -> Result<WsStream, WsError> {
-    let request = url.into_client_request()?;
+async fn connect_ws(
+    request: tokio_tungstenite::tungstenite::http::Request<()>,
+) -> Result<(WsStream, tokio_tungstenite::tungstenite::handshake::client::Response), WsError> {
     let uri = request.uri().clone();
     let (host, port) = target_host_port(&uri)?;
 
-    let base_stream: BoxStream = if let Ok(proxy_url) = env::var("ALL_PROXY") {
-        match parse_socks_proxy(&proxy_url) {
-            Ok((proxy_host, proxy_port)) => {
-                let stream =
-                    Socks5Stream::connect((proxy_host.as_str(), proxy_port), (host.as_str(), port))
-                        .await
-                        .map_err(|e| WsError::Io(io::Error::new(ErrorKind::Other, e)))?;
-                Box::new(stream)
-            }
-            Err(err) => {
-                tracing::warn!(error = ?err, "Invalid ALL_PROXY, connecting directly");
-                Box::new(TcpStream::connect((host.as_str(), port)).await?)
-            }
-        }
-    } else {
-        Box::new(TcpStream::connect((host.as_str(), port)).await?)
-    };
+    let base_stream: BoxStream = Box::new(TcpStream::connect((host.as_str(), port)).await?);
 
-    let (ws_stream, _) = client_async_tls_with_config(request, base_stream, None, None).await?;
-    Ok(ws_stream)
+    client_async_tls_with_config(request, base_stream, None, None).await
 }
 
 impl TableSchema for BookSnapShot {
