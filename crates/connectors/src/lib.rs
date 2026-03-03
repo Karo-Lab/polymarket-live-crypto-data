@@ -1,2 +1,2 @@
-pub mod ingestion;
 pub mod core;
+pub mod ingestion;

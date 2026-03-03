@@ -1,6 +1,9 @@
 use questdb::ingress::{Buffer, Sender, TimestampNanos};
 
-use exchanges_common::{error::IngestionError, traits::{ColumnValue, IngestionBackend}};
+use exchanges_common::{
+    error::IngestionError,
+    traits::{ColumnValue, IngestionBackend},
+};
 
 #[derive(Debug)]
 pub struct QuestDBClient {
@@ -28,26 +31,40 @@ impl IngestionBackend for QuestDBClient {
         for (col_name, col_value) in columns {
             match col_value {
                 ColumnValue::Integer(v) => {
-                    self.buffer.column_i64(col_name, v).map_err(|e| IngestionError::TypeError(e.to_string()))?;
+                    self.buffer
+                        .column_i64(col_name, v)
+                        .map_err(|e| IngestionError::TypeError(e.to_string()))?;
                 }
                 ColumnValue::Double(v) => {
-                    self.buffer.column_f64(col_name, v).map_err(|e| IngestionError::TypeError(e.to_string()))?;
+                    self.buffer
+                        .column_f64(col_name, v)
+                        .map_err(|e| IngestionError::TypeError(e.to_string()))?;
                 }
                 ColumnValue::Varchar(v) => {
-                    self.buffer.column_str(col_name, v).map_err(|e| IngestionError::TypeError(e.to_string()))?;
+                    self.buffer
+                        .column_str(col_name, v)
+                        .map_err(|e| IngestionError::TypeError(e.to_string()))?;
                 }
                 ColumnValue::Timestamp(ts) => {
                     if col_name == "timestamp" {
-                        self.buffer.at(TimestampNanos::new(ts)).map_err(|e| IngestionError::TypeError(e.to_string()))?;
+                        self.buffer
+                            .at(TimestampNanos::new(ts))
+                            .map_err(|e| IngestionError::TypeError(e.to_string()))?;
                     } else {
-                        self.buffer.column_ts(col_name, TimestampNanos::new(ts)).map_err(|e| IngestionError::TypeError(e.to_string()))?;
+                        self.buffer
+                            .column_ts(col_name, TimestampNanos::new(ts))
+                            .map_err(|e| IngestionError::TypeError(e.to_string()))?;
                     }
                 }
                 ColumnValue::Array2dDouble(arr) => {
-                    self.buffer.column_arr(col_name, &arr).map_err(|e| IngestionError::TypeError(e.to_string()))?;
+                    self.buffer
+                        .column_arr(col_name, &arr)
+                        .map_err(|e| IngestionError::TypeError(e.to_string()))?;
                 }
                 ColumnValue::Symbol(s) => {
-                    self.buffer.symbol(col_name, s).map_err(|e| IngestionError::TypeError(e.to_string()))?;
+                    self.buffer
+                        .symbol(col_name, s)
+                        .map_err(|e| IngestionError::TypeError(e.to_string()))?;
                 }
                 _ => {}
             }
@@ -55,7 +72,9 @@ impl IngestionBackend for QuestDBClient {
         Ok(())
     }
     async fn flush(&mut self) -> Result<(), IngestionError> {
-        self.sender.flush(&mut self.buffer).map_err(|e| IngestionError::IngestionFailed(e.to_string()))?;
+        self.sender
+            .flush(&mut self.buffer)
+            .map_err(|e| IngestionError::IngestionFailed(e.to_string()))?;
         Ok(())
     }
 }
