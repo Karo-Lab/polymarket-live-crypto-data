@@ -11,8 +11,13 @@ use tokio_tungstenite::{
     tungstenite::{Message, http::Request},
 };
 
-pub(crate) type WsWriter = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
-pub(crate) type WsReader = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
+pub trait AsyncStream: AsyncRead + AsyncWrite {}
+impl<T: AsyncRead + AsyncWrite + ?Sized> AsyncStream for T {}
+
+pub(crate) type BoxStream = Box<dyn AsyncStream + Send + Unpin>;
+pub(crate) type WsStream = WebSocketStream<MaybeTlsStream<BoxStream>>;
+pub(crate) type WsWriter = SplitSink<WsStream, Message>;
+pub(crate) type WsReader = SplitStream<WsStream>;
 
 pub trait ExchangeConnectorAdapter {
     fn get_source_name(&self) -> String;
