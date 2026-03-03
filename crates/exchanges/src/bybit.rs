@@ -1,12 +1,13 @@
 use exchanges_common::{
-    models::{LevelDelta},
-    traits::{ExchangeAdapter, ExchangeConnectorAdapter},
+    error::ConnectorError,
+    models::{BookLevel, DEFAULT_PRICE_SCALE, DEFAULT_QTY_SCALE, NormalizedBookEvent, Price, Size},
+    traits::ExchangeConnectorAdapter,
 };
 use std::{borrow::Cow, str::FromStr};
 
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, prelude::ToPrimitive};
 use serde::Deserialize;
-use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
+use tokio_tungstenite::tungstenite::{Message, Utf8Bytes, client::IntoClientRequest};
 
 #[derive(Debug, Deserialize)]
 pub struct BybitBookMessage<'a> {
@@ -34,102 +35,16 @@ pub struct BybitBookMessageData<'a> {
 }
 
 #[derive(Debug)]
-pub struct BybitAdapter;
-
-impl ExchangeAdapter for BybitAdapter {
-    type InputBookData<'a> = BybitBookMessage<'a>;
-    const EXCHANGE_NAME: Cow<'_, str> = Cow::Borrowed("bybit");
-
-    fn get_instrument<'a>(&self, msg: &'a Self::InputBookData<'_>) -> &'a str {
-        &msg.data.s
-    }
-
-    fn is_snapshot<'a>(&self, msg: &'a Self::InputBookData<'_>) -> bool {
-        msg.event_type.as_ref() == "snapshot"
-    }
-
-    fn get_timestamp<'a>(&self, msg: &'a Self::InputBookData<'_>) -> i64 {
-        msg.ts
-    }
-
-    fn get_seq_id<'a>(&self, msg: &'a Self::InputBookData<'_>) -> i64 {
-        msg.data.u
-    }
-    fn get_prev_seq_id<'a>(&self, msg: &'a Self::InputBookData<'_>) -> i64 {
-        msg.data.u - 1i64
-    }
-    fn apply<'a, 'b>(
-        &self,
-        core: &'b mut exchanges_common::models::OrderBookL2,
-        msg: &'a Self::InputBookData<'_>,
-    ) -> Vec<LevelDelta<'b>> {
-        let mut changes = Vec::new();
-
-        for level in msg.data.b.iter() {
-            let price = Decimal::from_str(&level.first().unwrap_or(&Cow::Borrowed("0")))
-                .unwrap_or_default();
-            let new_size =
-                Decimal::from_str(&level.last().unwrap_or(&Cow::Borrowed("0"))).unwrap_or_default();
-
-            let old_size = if new_size.is_zero() {
-                core.bids.remove(&price).unwrap_or_default()
-            } else {
-                core.bids.insert(price, new_size).unwrap_or_default()
-            };
-
-            if old_size != new_size {
-                changes.push(LevelDelta {
-                    side: "bid",
-                    price,
-                    old_size,
-                    new_size,
-                    diff: new_size - old_size,
-                });
-            }
-        }
-
-        for level in msg.data.a.iter() {
-            let price = Decimal::from_str(&level.first().unwrap_or(&Cow::Borrowed("0")))
-                .unwrap_or_default();
-            let new_size =
-                Decimal::from_str(&level.last().unwrap_or(&Cow::Borrowed("0"))).unwrap_or_default();
-
-            let old_size = if new_size.is_zero() {
-                core.asks.remove(&price).unwrap_or_default()
-            } else {
-                core.asks.insert(price, new_size).unwrap_or_default()
-            };
-
-            if old_size != new_size {
-                changes.push(LevelDelta {
-                    side: "ask",
-                    price,
-                    old_size,
-                    new_size,
-                    diff: new_size - old_size,
-                });
-            }
-        }
-        changes
-    }
-    
-    fn get_bids<'a>(&self, msg: &'a Self::InputBookData<'_>) -> &'a Vec<Vec<Cow<'a, str>>> {
-        &msg.data.b
-    }
-    fn get_asks<'a>(&self, msg: &'a Self::InputBookData<'_>) -> &'a Vec<Vec<Cow<'a, str>>> {
-        &msg.data.a
-    }
-}
-
-#[derive(Debug)]
 pub struct BybitConnectorAdapter;
 
 impl ExchangeConnectorAdapter for BybitConnectorAdapter {
     fn get_source_name(&self) -> String {
         "Bybit".to_string()
     }
-    fn get_url(&self) -> String {
-        "wss://stream.bybit.com/v5/public/linear".to_string()
+    fn get_url(&self) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, ConnectorError> {
+        "wss://stream.bybit.com/v5/public/linear"
+            .into_client_request()
+            .map_err(|e| ConnectorError::WebSocket(e.to_string()))
     }
     fn create_subscription(
         &self,
@@ -155,31 +70,62 @@ impl ExchangeConnectorAdapter for BybitConnectorAdapter {
         Message::Text(Utf8Bytes::from(json_string))
     }
 
-    fn route_message(
+    fn parse_market_event(
         &self,
-        msg: &impl AsRef<[u8]>,
-    ) -> Result<u128, exchanges_common::error::ConnectorError> {
-        let bytes = msg.as_ref();
-        let pattern = b"\"s\":\"";
+        msg: &[u8],
+    ) -> Result<Option<NormalizedBookEvent>, ConnectorError> {
+        let parsed = match serde_json::from_slice::<BybitBookMessage<'_>>(msg) {
+            Ok(v) => v,
+            Err(_) => return Ok(None),
+        };
 
-        let mut chunk = [0u8; 16];
-        let mut result = 0u128;
-
-        if let Some(index) = bytes
-            .windows(pattern.len())
-            .position(|matching| matching == pattern)
-        {
-            let start = index + pattern.len();
-
-            if let Some(end) = bytes[start..].iter().position(|&b| b == b'"') {
-                let symbol = &bytes[start..start + end];
-
-                chunk[..symbol.len().min(16)].copy_from_slice(symbol);
-
-                result = u128::from_le_bytes(chunk);
-            }
+        if parsed.topic.is_empty() || parsed.data.s.is_empty() {
+            return Ok(None);
         }
 
-        Ok(result)
+        let mut bids = Vec::with_capacity(parsed.data.b.len());
+        for level in &parsed.data.b {
+            let Some(book_level) = parse_level(level) else {
+                continue;
+            };
+            bids.push(book_level);
+        }
+
+        let mut asks = Vec::with_capacity(parsed.data.a.len());
+        for level in &parsed.data.a {
+            let Some(book_level) = parse_level(level) else {
+                continue;
+            };
+            asks.push(book_level);
+        }
+
+        Ok(Some(NormalizedBookEvent {
+            exchange: "bybit".to_string(),
+            symbol: parsed.data.s.into_owned(),
+            timestamp: parsed.ts,
+            seq_id: parsed.data.u,
+            prev_seq_id: parsed.data.u.saturating_sub(1),
+            is_snapshot: parsed.event_type.as_ref() == "snapshot",
+            price_scale: DEFAULT_PRICE_SCALE,
+            size_scale: DEFAULT_QTY_SCALE,
+            bids,
+            asks,
+        }))
     }
+}
+
+fn parse_level(level: &[Cow<'_, str>]) -> Option<BookLevel> {
+    let price_raw = level.first()?;
+    let size_raw = level.last()?;
+
+    let price = Decimal::from_str(price_raw).ok()?;
+    let size = Decimal::from_str(size_raw).ok()?;
+
+    let scaled_price = (price * Decimal::from(DEFAULT_PRICE_SCALE)).round();
+    let scaled_size = (size * Decimal::from(DEFAULT_QTY_SCALE)).round();
+
+    Some(BookLevel {
+        price: Price(scaled_price.to_u32()?),
+        size: Size(scaled_size.to_u64()?),
+    })
 }

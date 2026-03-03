@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use rust_decimal::Decimal;
-use serde::{Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use std::{borrow::Cow, fmt::Debug};
 
@@ -21,8 +21,8 @@ pub enum SystemEvent<'a> {
     },
     L2LOBState {
         #[serde(borrow)]
-        state: &'a str
-    }
+        state: &'a str,
+    },
 }
 
 #[derive(Debug)]
@@ -123,7 +123,7 @@ impl AsRef<str> for LogEventCategory {
         match self {
             LogEventCategory::Audit => "LogEventCategory::Audit",
             LogEventCategory::Ingestion => "LogEventCategory::Ingestion",
-            LogEventCategory::System => "LogEventCategory::System"
+            LogEventCategory::System => "LogEventCategory::System",
         }
     }
 }
@@ -135,7 +135,7 @@ where
 {
     pub version: &'a str,
     pub service: Cow<'a, str>,
-    pub category:  LogEventCategory,
+    pub category: LogEventCategory,
     pub event_name: Cow<'a, str>,
     pub data: T,
 }
@@ -160,12 +160,11 @@ where
     }
 }
 
-
 #[derive(Debug, Serialize)]
 pub enum ErrorSeverity {
     Critical,
     Recoverable,
-    Fatal
+    Fatal,
 }
 
 #[derive(Debug, Serialize)]
@@ -173,7 +172,7 @@ pub struct ErrorPayload<'a> {
     error_code: &'a str,
     messsage: &'a str,
     severity: ErrorSeverity,
-    is_retryable: bool
+    is_retryable: bool,
 }
 
 impl<'a> ErrorPayload<'a> {
@@ -183,18 +182,17 @@ impl<'a> ErrorPayload<'a> {
             error_code: code,
             messsage: err,
             severity,
-            is_retryable: retryable
+            is_retryable: retryable,
         }
     }
 }
-
 
 #[macro_export]
 macro_rules! log_info {
     ($category:expr, $name:expr, $service:expr, $data:expr) => {
         if tracing::enabled!(tracing::Level::INFO) {
             let event = $crate::telementry::StandardEvent::new($category, $name, $service, $data);
-            
+
             tracing::info!(event = ?event, "log_info");
         }
     };
@@ -205,7 +203,7 @@ macro_rules! log_warn {
     ($category:expr, $name:expr, $service:expr, $data:expr) => {
         if tracing::enabled!(tracing::Level::WARN) {
             let event = $crate::telementry::StandardEvent::new($category, $name, $service, $data);
-            
+
             tracing::warn!(event = ?event, "log_warning");
         }
     };
@@ -216,7 +214,7 @@ macro_rules! log_error {
     ($category:expr, $name:expr, $service:expr, $payload:expr) => {
         if tracing::enabled!(tracing::Level::ERROR) {
             let event = $crate::telementry::StandardEvent::new($category, $name, $service, $payload);
-            
+
             tracing::error!(event = ?event, "log_error");
         }
     };
