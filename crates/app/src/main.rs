@@ -38,8 +38,8 @@ async fn main() {
     let (audit_tx, audit_rx) = mpsc::channel::<AuditEvent>(1024);
     let (book_cmd_tx, book_cmd_rx) = mpsc::channel::<OrderBookCommand>(32_768);
 
-    // let pg_pool = init_postgres_pool().await;
-    // let questdb_client = init_questdb_client();
+    let pg_pool = init_postgres_pool().await;
+    let questdb_client = init_questdb_client();
 
     // Snapshot ticker
     let snapshot_ticker = book_cmd_tx.clone();
@@ -56,18 +56,18 @@ async fn main() {
         }
     });
 
-    // supervisor.spawn_worker("audit_worket", |token| async move {
-    //     let client = AuditClient::new(audit_rx, pg_pool, token.clone());
-    //     client.run().await;
-    //     Ok::<(), String>(())
-    // });
+    supervisor.spawn_worker("audit_worket", |token| async move {
+        let client = AuditClient::new(audit_rx, pg_pool, token.clone());
+        client.run().await;
+        Ok::<(), String>(())
+    });
 
-    // supervisor.spawn_worker("ingestion_worker", |token| async move {
-    //     let controller = IngestionController::new(questdb_client);
-    //     let client = IngestionClient::new(controller, ingestion_rx, token.clone());
-    //     client.run().await;
-    //     Ok::<(), String>(())
-    // });
+    supervisor.spawn_worker("ingestion_worker", |token| async move {
+        let controller = IngestionController::new(questdb_client);
+        let client = IngestionClient::new(controller, ingestion_rx, token.clone());
+        client.run().await;
+        Ok::<(), String>(())
+    });
 
     let ecs_restart_signal_tx = restart_signal_tx.clone();
     let ecs_ingestion_tx = ingestion_tx.clone();
